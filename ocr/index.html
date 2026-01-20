@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Textile Bill Scanner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="container">
+    <h1>New Goo Nits – Textile Billing</h1>
+
+    <!-- Upload Section -->
+    <div class="card">
+      <h2>Upload Bill</h2>
+      <input type="file" id="billImage" accept="image/*">
+      <div class="preview">
+        <img id="previewImage" />
+      </div>
+      <button onclick="extractText()">Extract Data</button>
+    </div>
+
+    <!-- Form Section -->
+    <div class="card">
+      <h2>Extracted Bill Data</h2>
+
+      <label>Bill Number</label>
+      <input type="text" id="billNo">
+
+      <label>Date</label>
+      <input type="text" id="date">
+
+      <label>Customer Name</label>
+      <input type="text" id="customer">
+
+      <label>GST Amount</label>
+      <input type="text" id="gst">
+
+      <label>Total Amount</label>
+      <input type="text" id="total">
+
+      <button class="save">Save Data</button>
+      <button class="clear" onclick="clearForm()">Clear</button>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+
+  <script src="script.js"></script>
+</body>
+</html>
