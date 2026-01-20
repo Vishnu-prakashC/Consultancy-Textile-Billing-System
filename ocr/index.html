@@ -2,50 +2,206 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Textile Bill Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> OCR Data Entry System</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-  <div class="container">
-    <h1>New Goo Nits – Textile Billing</h1>
-
-    <!-- Upload Section -->
-    <div class="card">
-      <h2>Upload Bill</h2>
-      <input type="file" id="billImage" accept="image/*">
-      <div class="preview">
-        <img id="previewImage" />
+  <!-- Header Section -->
+  <header class="app-header">
+    <div class="header-content">
+      <div class="company-info">
+        <h1 class="company-name">New Good Nits</h1>
+        <p class="module-title"> Bill Scanning & Data Entry System</p>
       </div>
-      <button onclick="extractText()">Extract Data</button>
+      <nav class="main-nav">
+        <button class="nav-btn active" data-view="scan">Scan Bill</button>
+        <button class="nav-btn" data-view="records">View Records</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="container">
+    <!-- Scan Bill View -->
+    <div id="scanView" class="view active">
+      <!-- Upload Section -->
+      <div class="card upload-card">
+        <div class="card-header">
+          <h2>Upload Bill Image</h2>
+          <p class="helper-text">Upload a JPG or PNG image of your textile bill for automatic data extraction</p>
+        </div>
+        <div class="card-body">
+          <div class="upload-area" id="uploadArea">
+            <input type="file" id="billImage" accept="image/jpeg,image/jpg,image/png" hidden>
+            <div class="upload-placeholder">
+              <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <p>Click to upload or drag and drop</p>
+              <p class="file-types">JPG, PNG (Max 10MB)</p>
+            </div>
+          </div>
+          <div class="preview-container" id="previewContainer" style="display: none;">
+            <div class="image-preview-wrapper">
+              <img id="previewImage" alt="Bill preview" />
+              <button class="btn-icon remove-image" id="removeImage" title="Remove image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <button class="btn btn-primary" id="extractBtn" onclick="OCRModule.extractText()">
+              <span class="btn-text">Extract Data with OCR</span>
+              <span class="btn-loader" style="display: none;"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- OCR Results Section -->
+      <div class="card ocr-results-card" id="ocrResultsCard" style="display: none;">
+        <div class="card-header">
+          <h2>Auto-Detected Values</h2>
+          <p class="helper-text warning-text">⚠️ Please verify extracted data before saving. OCR accuracy may vary.</p>
+        </div>
+        <div class="card-body">
+          <div class="ocr-confidence" id="ocrConfidence"></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="billNo">
+                Bill Number <span class="required">*</span>
+                <span class="field-hint">Auto-extracted from invoice number</span>
+              </label>
+              <input type="text" id="billNo" class="form-input" placeholder="Enter bill number" required>
+              <span class="field-status" id="billNoStatus"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="date">
+                Date <span class="required">*</span>
+                <span class="field-hint">Format: DD/MM/YYYY</span>
+              </label>
+              <input type="date" id="date" class="form-input" required>
+              <span class="field-status" id="dateStatus"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="customer">
+                Customer Name <span class="required">*</span>
+                <span class="field-hint">Name of the customer or company</span>
+              </label>
+              <input type="text" id="customer" class="form-input" placeholder="Enter customer name" required>
+              <span class="field-status" id="customerStatus"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="gst">
+                GST Amount
+                <span class="field-hint">GST tax amount in currency</span>
+              </label>
+              <input type="number" id="gst" class="form-input" placeholder="0.00" step="0.01" min="0">
+              <span class="field-status" id="gstStatus"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="total">
+                Total Amount <span class="required">*</span>
+                <span class="field-hint">Total bill amount including taxes</span>
+              </label>
+              <input type="number" id="total" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+              <span class="field-status" id="totalStatus"></span>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn btn-success" id="saveBtn" onclick="DataModule.saveBill()">
+              <span class="btn-text">Save Bill Record</span>
+            </button>
+            <button class="btn btn-secondary" onclick="UIModule.clearForm()">Clear Form</button>
+            <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Image</button>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Form Section -->
-    <div class="card">
-      <h2>Extracted Bill Data</h2>
+    <!-- Records View -->
+    <div id="recordsView" class="view">
+      <div class="card">
+        <div class="card-header">
+          <h2>Saved Bill Records</h2>
+          <p class="helper-text">View, search, and manage all your scanned bill records</p>
+        </div>
+        <div class="card-body">
+          <!-- Search and Filter Section -->
+          <div class="search-filter-bar">
+            <div class="search-group">
+              <input type="text" id="searchInput" class="search-input" placeholder="Search by bill number, customer name, or date...">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.35-4.35"></path>
+              </svg>
+            </div>
+            <select id="syncFilter" class="filter-select">
+              <option value="all">All Records</option>
+              <option value="synced">Synced</option>
+              <option value="not-synced">Not Synced</option>
+            </select>
+            <button class="btn btn-primary" onclick="ExportModule.exportToCSV()">
+              <span class="btn-text">Export CSV</span>
+            </button>
+          </div>
 
-      <label>Bill Number</label>
-      <input type="text" id="billNo">
-
-      <label>Date</label>
-      <input type="text" id="date">
-
-      <label>Customer Name</label>
-      <input type="text" id="customer">
-
-      <label>GST Amount</label>
-      <input type="text" id="gst">
-
-      <label>Total Amount</label>
-      <input type="text" id="total">
-
-      <button class="save">Save Data</button>
-      <button class="clear" onclick="clearForm()">Clear</button>
+          <!-- Records List -->
+          <div class="records-list" id="recordsList">
+            <div class="empty-state" id="emptyState">
+              <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+              <p>No records found. Start by scanning a bill!</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <!-- Record Detail Modal -->
+    <div class="modal" id="recordModal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Bill Details</h2>
+          <button class="btn-icon close-modal" onclick="UIModule.closeModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
   </div>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+    <div class="spinner"></div>
+    <p class="loading-text">Processing OCR...</p>
+  </div>
+
+  <!-- External Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-
-
+  
+  <!-- Application Scripts -->
   <script src="script.js"></script>
 </body>
 </html>
