@@ -968,6 +968,215 @@ body {
 }
 
 /* ============================================================================
+   IMAGE QUALITY WARNING
+   ============================================================================ */
+.quality-warning {
+  margin-bottom: var(--spacing-lg);
+  border: 2px solid var(--warning-color);
+  border-radius: var(--radius-md);
+  background: #fef3c7;
+  padding: var(--spacing-lg);
+}
+
+.quality-warning-content strong {
+  display: block;
+  color: #92400e;
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-base);
+}
+
+.quality-warning-content p {
+  color: #78350f;
+  margin-bottom: var(--spacing-sm);
+}
+
+.quality-warning-content ul {
+  margin: var(--spacing-sm) 0;
+  padding-left: var(--spacing-lg);
+  color: #78350f;
+}
+
+.quality-warning-content li {
+  margin-bottom: var(--spacing-xs);
+}
+
+.quality-warning-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+/* ============================================================================
+   POOR DATA WARNING
+   ============================================================================ */
+.poor-data-warning {
+  margin-bottom: var(--spacing-lg);
+  border: 2px solid var(--error-color);
+  border-radius: var(--radius-md);
+  background: #fee2e2;
+  padding: var(--spacing-lg);
+}
+
+.poor-data-warning-content strong {
+  display: block;
+  color: #991b1b;
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-base);
+}
+
+.poor-data-warning-content p {
+  color: #7f1d1d;
+  margin: 0;
+}
+
+/* ============================================================================
+   CONFIDENCE WARNING
+   ============================================================================ */
+.confidence-warning {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: #fef3c7;
+  border: 1px solid var(--warning-color);
+  border-radius: var(--radius-md);
+}
+
+.confidence-warning strong {
+  display: block;
+  color: #92400e;
+  margin-bottom: var(--spacing-xs);
+}
+
+.confidence-warning p {
+  color: #78350f;
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* ============================================================================
+   SCAN MODE SELECTOR
+   ============================================================================ */
+.scan-mode-selector {
+  margin: var(--spacing-lg) 0;
+  padding: var(--spacing-lg);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.scan-mode-selector label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: var(--spacing-sm);
+  color: var(--text-primary);
+}
+
+.scan-mode-selector select {
+  width: 100%;
+  margin-bottom: var(--spacing-xs);
+}
+
+/* ============================================================================
+   OCR ACTIONS
+   ============================================================================ */
+.ocr-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+/* ============================================================================
+   UPLOAD OPTIONS
+   ============================================================================ */
+.upload-options {
+  text-align: center;
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+}
+
+.upload-options .helper-text {
+  margin-bottom: var(--spacing-md);
+}
+
+/* ============================================================================
+   FIELD STATUS INDICATORS
+   ============================================================================ */
+.form-input.needs-manual-entry {
+  border-color: var(--warning-color);
+  background: #fef3c7;
+}
+
+.form-input.low-confidence {
+  border-color: var(--warning-color);
+  background: #fef3c7;
+}
+
+.field-hint.warning {
+  color: var(--warning-color);
+  font-weight: 500;
+}
+
+.field-hint.success {
+  color: var(--success-color);
+  font-weight: 500;
+}
+
+/* ============================================================================
+   CAMERA MODAL
+   ============================================================================ */
+.camera-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: var(--spacing-xl);
+}
+
+.camera-modal-content {
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  max-width: 600px;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: var(--shadow-xl);
+}
+
+.camera-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.camera-header h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+#cameraPreview {
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+.camera-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  justify-content: center;
+}
+
+/* ============================================================================
    ACCESSIBILITY
    ============================================================================ */
 @media (prefers-reduced-motion: reduce) {

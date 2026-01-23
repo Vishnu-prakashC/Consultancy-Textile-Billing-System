@@ -45,6 +45,9 @@
             </div>
           </div>
           <div class="preview-container" id="previewContainer" style="display: none;">
+            <!-- Image Quality Warning -->
+            <div id="qualityWarning" class="quality-warning" style="display: none;"></div>
+            
             <div class="image-preview-wrapper">
               <img id="previewImage" alt="Bill preview" />
               <button class="btn-icon remove-image" id="removeImage" title="Remove image">
@@ -54,9 +57,38 @@
                 </svg>
               </button>
             </div>
-            <button class="btn btn-primary" id="extractBtn" onclick="OCRModule.extractText()">
-              <span class="btn-text">Extract Data with OCR</span>
-              <span class="btn-loader" style="display: none;"></span>
+            
+            <!-- Scan Mode Selector -->
+            <div class="scan-mode-selector">
+              <label for="scanMode">Scan Mode:</label>
+              <select id="scanMode" class="form-input">
+                <option value="quick">Quick Scan (Single Pass)</option>
+                <option value="full" selected>Full Scan (Multi-Pass - Recommended for unclear bills)</option>
+              </select>
+              <p class="helper-text">Full Scan Mode scans multiple times for higher accuracy.</p>
+            </div>
+            
+            <!-- OCR Action Buttons -->
+            <div class="ocr-actions">
+              <button class="btn btn-primary" id="extractBtn" onclick="OCRModule.extractText()">
+                <span class="btn-text">Extract Data with OCR</span>
+                <span class="btn-loader" style="display: none;"></span>
+              </button>
+              <button class="btn btn-outline" id="cancelScanBtn" onclick="OCRModule.cancelScan()" style="display: none;">
+                <span class="btn-text">Cancel Scan</span>
+              </button>
+            </div>
+          </div>
+          
+          <!-- Camera Capture Option -->
+          <div class="upload-options">
+            <p class="helper-text">Or</p>
+            <button class="btn btn-outline" id="captureBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px;">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+              </svg>
+              <span class="btn-text">Capture Photo</span>
             </button>
           </div>
         </div>
@@ -69,6 +101,9 @@
           <p class="helper-text warning-text">⚠️ Please verify extracted data before saving. OCR accuracy may vary.</p>
         </div>
         <div class="card-body">
+          <!-- Poor Data Warning -->
+          <div id="poorDataWarning" class="poor-data-warning" style="display: none;"></div>
+          
           <div class="ocr-confidence" id="ocrConfidence"></div>
           <div class="form-grid">
             <div class="form-group">
@@ -121,8 +156,8 @@
             <button class="btn btn-success" id="saveBtn" onclick="DataModule.saveBill()">
               <span class="btn-text">Save Bill Record</span>
             </button>
-            <button class="btn btn-secondary" onclick="UIModule.clearForm()">Clear Form</button>
-            <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Image</button>
+            <button class="btn btn-secondary" onclick="UIModule.clearForm()">Reset Form</button>
+            <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Bill</button>
           </div>
         </div>
       </div>
@@ -202,6 +237,7 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   
   <!-- Application Scripts -->
+  <script src="TemplateConfig.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
