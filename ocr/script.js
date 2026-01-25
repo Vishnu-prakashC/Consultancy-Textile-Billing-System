@@ -663,7 +663,7 @@ const UIModule = {
   },
 
   /**
-   * Show image quality warning
+   * Show image quality warning (PRE-OCR GATE)
    */
   showQualityWarning(quality) {
     let warningEl = document.getElementById('qualityWarning');
@@ -682,12 +682,23 @@ const UIModule = {
         <p>Image quality is low. Please re-upload or re-scan for better accuracy.</p>
         <ul>${issuesList}</ul>
         <div class="quality-warning-actions">
-          <button class="btn btn-outline" onclick="UIModule.hideQualityWarning()">Continue Anyway</button>
+          <button class="btn btn-outline" onclick="UIModule.acknowledgeQualityWarning()">Continue Anyway (Not Recommended)</button>
           <button class="btn btn-primary" onclick="UIModule.clearForm()">Re-upload Image</button>
+          <button class="btn btn-secondary" onclick="UIModule.startCameraCapture()">Re-scan Using Camera</button>
         </div>
       </div>
     `;
     warningEl.style.display = 'block';
+  },
+
+  /**
+   * Acknowledge quality warning and allow OCR to proceed
+   */
+  acknowledgeQualityWarning() {
+    StorageModule.qualityWarningAcknowledged = true;
+    this.hideQualityWarning();
+    // Retry OCR scan
+    OCRModule.extractText();
   },
 
   /**
@@ -822,16 +833,19 @@ const UIModule = {
   clearForm() {
     document.querySelectorAll('#ocrResultsCard input').forEach(input => {
       input.value = '';
-      input.classList.remove('error', 'success');
+      input.classList.remove('error', 'success', 'low-confidence', 'needs-manual-entry');
     });
     
     document.getElementById('previewContainer').style.display = 'none';
     document.getElementById('ocrResultsCard').style.display = 'none';
     document.getElementById('uploadArea').style.display = 'block';
     document.getElementById('billImage').value = '';
+    this.hideQualityWarning();
     
     StorageModule.currentImageFile = null;
     StorageModule.currentImageData = null;
+    StorageModule.qualityWarningAcknowledged = false;
+    ConfidenceModule.reset();
   },
 
   /**
@@ -1023,20 +1037,28 @@ const OCRModule = {
       return;
     }
 
-    // Check image quality before OCR
+    // Check image quality before OCR (PRE-OCR GATE)
     UIModule.showLoading('Checking image quality...');
     const quality = await ImageQualityModule.analyzeQuality(file);
     
     if (quality.overall === 'poor') {
+      // Check if user has already acknowledged the warning
       const qualityWarning = document.getElementById('qualityWarning');
-      if (qualityWarning && qualityWarning.style.display !== 'none') {
-        // User chose to continue anyway
-      } else {
+      const userAcknowledged = StorageModule.qualityWarningAcknowledged || false;
+      
+      if (!userAcknowledged) {
+        // BLOCK OCR - Show warning and prevent scan
         UIModule.hideLoading();
         UIModule.showQualityWarning(quality);
-        UIModule.showToast('Image quality is low. Please improve image quality for better accuracy.', 'warning');
-        return;
+        UIModule.showToast('Image quality is low. Please re-upload or re-scan for better accuracy.', 'warning');
+        
+        // Hide cancel button since scan hasn't started
+        const cancelBtn = document.getElementById('cancelScanBtn');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        
+        return; // Block OCR execution
       }
+      // User has acknowledged - allow scan to proceed
     }
 
     // Get scan mode (default to 'quick')
@@ -1096,8 +1118,9 @@ const OCRModule = {
     const extractedText = data.text;
     const overallConfidence = data.confidence / 100;
 
-    // Extract structured data with confidence tracking
-    const { billData, fieldConfidences } = DataExtractionModule.extractBillDataWithConfidence(extractedText, data);
+    // Extract structured data with confidence tracking (use template if available)
+    const companyName = 'new-goo-nits'; // Can be made dynamic based on user selection
+    const { billData, fieldConfidences } = DataExtractionModule.extractBillDataWithConfidence(extractedText, data, companyName);
     
     UIModule.hideLoading();
     UIModule.showOCRResults(billData, overallConfidence, fieldConfidences);
@@ -1158,9 +1181,10 @@ const OCRModule = {
    * Merge results from multiple OCR passes
    */
   mergeScanResults(results) {
-    // Extract data from each pass
+    // Extract data from each pass (use template if available)
+    const companyName = 'new-goo-nits'; // Can be made dynamic based on user selection
     const allExtractions = results.map((result, index) => {
-      const extraction = DataExtractionModule.extractBillDataWithConfidence(result.text, { words: result.words });
+      const extraction = DataExtractionModule.extractBillDataWithConfidence(result.text, { words: result.words }, companyName);
       return {
         ...extraction,
         passIndex: index,
@@ -1253,9 +1277,11 @@ const OCRModule = {
 const DataExtractionModule = {
   /**
    * Extract structured bill data from OCR text using pattern matching
-   * This function uses regex patterns to identify common bill fields
+   * Uses template rules if available, falls back to generic patterns
+   * @param {string} text - OCR extracted text
+   * @param {string} companyName - Optional company name for template lookup
    */
-  extractBillData(text) {
+  extractBillData(text, companyName = null) {
     const data = {
       billNo: '',
       date: '',
@@ -1264,12 +1290,26 @@ const DataExtractionModule = {
       total: ''
     };
 
-    // Extract Bill Number (various patterns)
-    const billNoPatterns = [
+    // Get template if company name provided
+    let template = null;
+    if (companyName && typeof TemplateConfig !== 'undefined') {
+      template = TemplateConfig.getTemplate(companyName);
+    }
+
+    // Extract Bill Number (use template rule if available)
+    let billNoPatterns = [
       /(?:Invoice|Bill|INV)[\s#:]*No[.\s#:]*([A-Z0-9\-]+)/i,
       /(?:Invoice|Bill)[\s#:]*([A-Z0-9\-]{4,})/i,
       /No[.\s#:]*([A-Z0-9\-]+)/i
     ];
+    
+    // Apply template rule if available (e.g., "LABEL:Invoice No")
+    if (template && template.billNoRule) {
+      if (template.billNoRule.startsWith('LABEL:')) {
+        const label = template.billNoRule.replace('LABEL:', '').trim();
+        billNoPatterns.unshift(new RegExp(`(?:${label})[\\s#:]*([A-Z0-9\\-]+)`, 'i'));
+      }
+    }
     
     for (const pattern of billNoPatterns) {
       const match = text.match(pattern);
@@ -1315,11 +1355,19 @@ const DataExtractionModule = {
       }
     }
 
-    // Extract Customer Name (usually after "To:", "Customer:", "Bill To:")
-    const customerPatterns = [
+    // Extract Customer Name (use template rule if available)
+    let customerPatterns = [
       /(?:To|Customer|Bill\s*To)[\s:]+([A-Z][A-Za-z\s&]+?)(?:\n|GST|Date|Invoice|Total|$)/i,
       /(?:Customer\s*Name)[\s:]+([A-Z][A-Za-z\s&]+?)(?:\n|GST|Date|Invoice|Total|$)/i
     ];
+    
+    // Apply template rule if available (e.g., "AFTER:Bill To")
+    if (template && template.customerNameRule) {
+      if (template.customerNameRule.startsWith('AFTER:')) {
+        const label = template.customerNameRule.replace('AFTER:', '').trim();
+        customerPatterns.unshift(new RegExp(`(?:${label})[\\s:]+([A-Z][A-Za-z\\s&]+?)(?:\\n|GST|Date|Invoice|Total|$)`, 'i'));
+      }
+    }
     
     for (const pattern of customerPatterns) {
       const match = text.match(pattern);
@@ -1329,11 +1377,19 @@ const DataExtractionModule = {
       }
     }
 
-    // Extract GST Amount
-    const gstPatterns = [
+    // Extract GST Amount (use template rule if available)
+    let gstPatterns = [
       /(?:GST|Tax)[\s:]*[₹$]?[\s]*([\d,]+\.?\d*)/i,
       /(?:GST\s*Amount)[\s:]*[₹$]?[\s]*([\d,]+\.?\d*)/i
     ];
+    
+    // Apply template rule if available
+    if (template && template.gstRule) {
+      if (template.gstRule.startsWith('LABEL:')) {
+        const label = template.gstRule.replace('LABEL:', '').trim();
+        gstPatterns.unshift(new RegExp(`(?:${label})[\\s:]*[₹$]?[\\s]*([\\d,]+\\.?\\d*)`, 'i'));
+      }
+    }
     
     for (const pattern of gstPatterns) {
       const match = text.match(pattern);
@@ -1343,11 +1399,19 @@ const DataExtractionModule = {
       }
     }
 
-    // Extract Total Amount (usually the largest number or explicitly marked)
-    const totalPatterns = [
+    // Extract Total Amount (use template rule if available)
+    let totalPatterns = [
       /(?:Total|Grand\s*Total|Amount\s*Payable)[\s:]*[₹$]?[\s]*([\d,]+\.?\d*)/i,
       /(?:Total\s*Amount)[\s:]*[₹$]?[\s]*([\d,]+\.?\d*)/i
     ];
+    
+    // Apply template rule if available
+    if (template && template.totalRule) {
+      if (template.totalRule.startsWith('LABEL:')) {
+        const label = template.totalRule.replace('LABEL:', '').trim();
+        totalPatterns.unshift(new RegExp(`(?:${label})[\\s:]*[₹$]?[\\s]*([\\d,]+\\.?\\d*)`, 'i'));
+      }
+    }
     
     for (const pattern of totalPatterns) {
       const match = text.match(pattern);
@@ -1375,10 +1439,11 @@ const DataExtractionModule = {
    * Extract structured bill data with confidence tracking per field
    * @param {string} text - OCR extracted text
    * @param {Object} ocrData - Full OCR data including words and confidence
+   * @param {string} companyName - Optional company name for template lookup
    * @returns {Object} Extracted data with field confidences
    */
-  extractBillDataWithConfidence(text, ocrData = {}) {
-    const billData = this.extractBillData(text);
+  extractBillDataWithConfidence(text, ocrData = {}, companyName = null) {
+    const billData = this.extractBillData(text, companyName);
     const fieldConfidences = {};
 
     // Calculate confidence for each field based on word-level confidence
@@ -1441,6 +1506,7 @@ const StorageModule = {
   currentImageData: null,
   currentScanMode: 'full', // 'quick' or 'full' (default: 'full' for better accuracy)
   cameraStream: null,
+  qualityWarningAcknowledged: false, // Track if user acknowledged quality warning
 
   /**
    * Initialize IndexedDB database
