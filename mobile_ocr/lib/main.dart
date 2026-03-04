@@ -22,8 +22,8 @@ class _OCRScreenState extends State<OCRScreen> {
   String date = "";
   String total = "";
 
-  Future<void> pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.camera);
+  Future<void> pickImage(ImageSource source) async {
+    final picked = await ImagePicker().pickImage(source: source);
 
     if (picked != null) {
       imageFile = File(picked.path);
@@ -64,9 +64,18 @@ class _OCRScreenState extends State<OCRScreen> {
         padding: EdgeInsets.all(16),
         child: Column(
           children: [
-            ElevatedButton(
-              onPressed: pickImage,
-              child: Text("Scan Bill"),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton(
+                  onPressed: () => pickImage(ImageSource.camera),
+                  child: Text("Camera"),
+                ),
+                ElevatedButton(
+                  onPressed: () => pickImage(ImageSource.gallery),
+                  child: Text("Gallery"),
+                ),
+              ],
             ),
             SizedBox(height: 20),
             if (imageFile != null)
