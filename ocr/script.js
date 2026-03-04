@@ -1442,7 +1442,74 @@ const DataExtractionModule = {
    * @param {string} companyName - Optional company name for template lookup
    * @returns {Object} Extracted data with field confidences
    */
+  _mapNewGoodNitsToBillData(structured, ocrData) {
+    const { customer, billMeta, table, totals } = structured;
+    const toNum = (s) => (s == null || s === '' ? 0 : parseFloat(String(s).replace(/,/g, '')));
+
+    let dateStr = billMeta.date || '';
+    if (dateStr && /^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}$/.test(dateStr)) {
+      const parts = dateStr.split(/[\/.-]/);
+      const d = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      const y = parts[2];
+      dateStr = `${y}-${m}-${d}`;
+    }
+
+    const customerName = customer
+      ? [customer.name, customer.address].filter(Boolean).join(', ').trim()
+      : '';
+
+    const cgst = toNum(totals.cgst);
+    const sgst = toNum(totals.sgst);
+    const gstVal = cgst + sgst;
+
+    const billData = {
+      billNo: billMeta.billNo || '',
+      date: dateStr,
+      customer: customerName,
+      gst: gstVal > 0 ? String(gstVal) : '',
+      total: totals.netTotal ? String(totals.netTotal).replace(/,/g, '') : ''
+    };
+
+    const fieldConfidences = {
+      billNo: billData.billNo ? 0.9 : 0,
+      date: billData.date ? 0.9 : 0,
+      customer: billData.customer ? 0.9 : 0,
+      gst: billData.gst ? 0.9 : 0,
+      total: billData.total ? 0.9 : 0
+    };
+
+    Object.keys(fieldConfidences).forEach((field) => {
+      ConfidenceModule.setFieldConfidence(field, fieldConfidences[field], billData[field]);
+    });
+
+    if (window.InvoiceValidation && table.length > 0) {
+      const sub = totals.subtotal ? toNum(totals.subtotal) : table.reduce((s, r) => s + (r.amount || 0), 0);
+      const vTable = window.InvoiceValidation.validateTableSum(table, totals.subtotal);
+      const vGst = window.InvoiceValidation.validateGST(totals.subtotal, totals.cgst, totals.sgst);
+      const vNet = window.InvoiceValidation.validateNetTotal(totals.subtotal, totals.cgst, totals.sgst, totals.netTotal);
+      if (!vTable || !vGst || !vNet) {
+        console.warn('Invoice validation:', { tableSum: vTable, gst: vGst, netTotal: vNet });
+      }
+    }
+
+    return { billData, fieldConfidences };
+  },
+
   extractBillDataWithConfidence(text, ocrData = {}, companyName = null) {
+    // Use Intelligent Extraction Module when NEW GOOD NITS template is detected
+    if (typeof window !== 'undefined' && window.TemplateEngine) {
+      const template = window.TemplateEngine.detectTemplate(text);
+      if (template === 'NEW_GOOD_NITS') {
+        try {
+          const structured = window.TemplateEngine.extractData(text);
+          return this._mapNewGoodNitsToBillData(structured, ocrData);
+        } catch (err) {
+          console.warn('Template extraction failed, falling back to generic:', err.message);
+        }
+      }
+    }
+
     const billData = this.extractBillData(text, companyName);
     const fieldConfidences = {};
 
