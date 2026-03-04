@@ -767,6 +767,175 @@ const UIModule = {
   },
 
   /**
+   * Show NEW GOOD NITS template-specific results (section cards + table + totals).
+   * Always shows full form. If qualityWasPoor or low confidence, shows advisory recovery-mode banner (never blocks).
+   */
+  showNewGoodNitsResults(structuredData, billData = {}, fieldConfidences = {}, overallConfidence = 0, qualityWasPoor = false) {
+    document.getElementById('ocrResultsCard').style.display = 'none';
+    const card = document.getElementById('newGoodNitsResultsCard');
+    card.style.display = 'block';
+
+    StorageModule.currentStructuredData = structuredData;
+
+    const showRecoveryBanner = qualityWasPoor || (overallConfidence > 0 && overallConfidence < 0.7);
+    let recoveryBannerHtml = '';
+    if (showRecoveryBanner) {
+      recoveryBannerHtml = `
+        <div class="recovery-mode-banner" role="alert">
+          <strong>⚠️ Low image quality detected</strong>
+          <p>Extraction completed using recovery mode. Please verify highlighted fields.</p>
+        </div>
+      `;
+    }
+
+    const c = structuredData.customer || {};
+    const b = structuredData.billMeta || {};
+    const t = structuredData.totals || {};
+
+    document.getElementById('ngnCustomerName').value = c.name || '';
+    document.getElementById('ngnCustomerAddress').value = c.address || '';
+    document.getElementById('ngnCustomerGst').value = c.gstNo || '';
+    document.getElementById('ngnCustomerState').value = c.state || '';
+
+    document.getElementById('ngnBillNo').value = b.billNo || '';
+    let dateStr = b.date || '';
+    if (dateStr && /^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}$/.test(dateStr)) {
+      const parts = dateStr.split(/[\/.-]/);
+      dateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    document.getElementById('ngnDate').value = dateStr || '';
+    document.getElementById('ngnJobNo').value = b.jobNo || '';
+    document.getElementById('ngnPartyDcNo').value = b.partyDcNo || '';
+
+    document.getElementById('ngnSubtotal').value = t.subtotal ? String(t.subtotal).replace(/,/g, '') : '';
+    document.getElementById('ngnCgst').value = t.cgst ? String(t.cgst).replace(/,/g, '') : '';
+    document.getElementById('ngnSgst').value = t.sgst ? String(t.sgst).replace(/,/g, '') : '';
+    document.getElementById('ngnRoundedOff').value = t.roundedOff ? String(t.roundedOff).replace(/,/g, '') : '';
+    document.getElementById('ngnNetTotal').value = t.netTotal ? String(t.netTotal).replace(/,/g, '') : '';
+
+    const tbody = document.getElementById('ngnTableBody');
+    tbody.innerHTML = '';
+    (structuredData.table || []).forEach((row) => {
+      const tr = document.createElement('tr');
+      const esc = (v) => (v == null ? '' : String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+      tr.innerHTML = `
+        <td><input type="text" class="table-input" value="${esc(row.slNo)}" data-col="slNo"></td>
+        <td><input type="text" class="table-input" value="${esc(row.dc)}" data-col="dc"></td>
+        <td><input type="text" class="table-input" value="${esc(row.date)}" data-col="date"></td>
+        <td><input type="text" class="table-input" value="${esc(row.gg)}" data-col="gg"></td>
+        <td><input type="text" class="table-input" value="${esc(row.fabric)}" data-col="fabric"></td>
+        <td><input type="text" class="table-input" value="${esc(row.counts)}" data-col="counts"></td>
+        <td><input type="text" class="table-input" value="${esc(row.mill)}" data-col="mill"></td>
+        <td><input type="text" class="table-input" value="${esc(row.dia)}" data-col="dia"></td>
+        <td><input type="number" class="table-input" step="0.001" value="${row.weight ?? ''}" data-col="weight"></td>
+        <td><input type="number" class="table-input" step="0.001" value="${row.rate ?? ''}" data-col="rate"></td>
+        <td><input type="number" class="table-input" step="0.01" value="${row.amount ?? ''}" data-col="amount"></td>
+        <td class="td-actions"><button type="button" class="btn-icon btn-delete-row" title="Delete row">×</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    this.updateNgnTableRowCount();
+    this.bindNgnTableActions();
+
+    const confPercent = Math.round((overallConfidence * 100) || 0);
+    const confEl = document.getElementById('ngnOcrConfidence');
+    confEl.innerHTML = recoveryBannerHtml + `
+      <div class="confidence-badge ${confPercent >= 70 ? 'high' : confPercent >= 50 ? 'medium' : 'low'}">
+        <span>OCR Confidence: ${confPercent}%</span>
+      </div>
+    `;
+
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  },
+
+  updateNgnTableRowCount() {
+    const tbody = document.getElementById('ngnTableBody');
+    const el = document.getElementById('ngnTableRowCount');
+    if (el && tbody) el.textContent = tbody.querySelectorAll('tr').length + ' row(s)';
+  },
+
+  bindNgnTableActions() {
+    const tbody = document.getElementById('ngnTableBody');
+    if (!tbody) return;
+
+    const recalc = () => this.recalcNgnTotals();
+
+    tbody.addEventListener('click', (e) => {
+      if (e.target.classList.contains('btn-delete-row')) {
+        e.target.closest('tr').remove();
+        this.updateNgnTableRowCount();
+        recalc();
+      }
+    });
+
+    tbody.addEventListener('input', () => recalc());
+    tbody.addEventListener('change', () => recalc());
+
+    const addBtn = document.getElementById('ngnAddRowBtn');
+    const delBtn = document.getElementById('ngnDeleteRowBtn');
+    const recalcBtn = document.getElementById('ngnRecalcTotalsBtn');
+
+    if (addBtn) {
+      addBtn.onclick = () => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input type="text" class="table-input" data-col="slNo" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="dc" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="date" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="gg" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="fabric" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="counts" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="mill" placeholder=""></td>
+          <td><input type="text" class="table-input" data-col="dia" placeholder=""></td>
+          <td><input type="number" class="table-input" step="0.001" data-col="weight" placeholder=""></td>
+          <td><input type="number" class="table-input" step="0.001" data-col="rate" placeholder=""></td>
+          <td><input type="number" class="table-input" step="0.01" data-col="amount" placeholder=""></td>
+          <td class="td-actions"><button type="button" class="btn-icon btn-delete-row" title="Delete row">×</button></td>
+        `;
+        tbody.appendChild(tr);
+        this.updateNgnTableRowCount();
+        recalc();
+      };
+    }
+
+    if (delBtn) {
+      delBtn.onclick = () => {
+        const rows = tbody.querySelectorAll('tr');
+        if (rows.length > 0) {
+          rows[rows.length - 1].remove();
+          this.updateNgnTableRowCount();
+          recalc();
+        }
+      };
+    }
+
+    if (recalcBtn) recalcBtn.onclick = recalc;
+  },
+
+  recalcNgnTotals() {
+    const tbody = document.getElementById('ngnTableBody');
+    if (!tbody) return;
+    let subtotal = 0;
+    tbody.querySelectorAll('tr').forEach((tr) => {
+      const inputs = tr.querySelectorAll('input[data-col="amount"]');
+      if (inputs.length) {
+        const v = parseFloat(inputs[0].value);
+        if (!isNaN(v)) subtotal += v;
+      }
+    });
+    const subEl = document.getElementById('ngnSubtotal');
+    if (subEl) subEl.value = subtotal > 0 ? subtotal.toFixed(2) : '';
+
+    const cgst = parseFloat(document.getElementById('ngnCgst')?.value || 0);
+    const sgst = parseFloat(document.getElementById('ngnSgst')?.value || 0);
+    const rounded = parseFloat(document.getElementById('ngnRoundedOff')?.value || 0);
+    const net = subtotal + cgst + sgst + rounded;
+    const netEl = document.getElementById('ngnNetTotal');
+    if (netEl) netEl.value = net > 0 ? net.toFixed(2) : (netEl.value || '');
+  },
+
+  /**
    * Populate field with confidence indicator
    */
   populateFieldWithConfidence(fieldId, value, confidence) {
@@ -838,12 +1007,21 @@ const UIModule = {
     
     document.getElementById('previewContainer').style.display = 'none';
     document.getElementById('ocrResultsCard').style.display = 'none';
+    document.getElementById('newGoodNitsResultsCard').style.display = 'none';
     document.getElementById('uploadArea').style.display = 'block';
     document.getElementById('billImage').value = '';
     this.hideQualityWarning();
+    const zonesOverlay = document.getElementById('zonesOverlay');
+    if (zonesOverlay) zonesOverlay.style.display = 'none';
+    const toggleZonesBtn = document.getElementById('toggleZonesBtn');
+    if (toggleZonesBtn) {
+      const t = toggleZonesBtn.querySelector('.btn-text');
+      if (t) t.textContent = 'Show extraction zones';
+    }
     
     StorageModule.currentImageFile = null;
     StorageModule.currentImageData = null;
+    StorageModule.currentStructuredData = null;
     StorageModule.qualityWarningAcknowledged = false;
     ConfidenceModule.reset();
   },
@@ -863,6 +1041,7 @@ const UIModule = {
       // Reset OCR results
       ConfidenceModule.reset();
       document.getElementById('ocrResultsCard').style.display = 'none';
+      document.getElementById('newGoodNitsResultsCard').style.display = 'none';
       document.getElementById('poorDataWarning')?.remove();
       
       // Clear form fields
@@ -879,52 +1058,170 @@ const UIModule = {
   },
 
   /**
-   * Show modal with record details
+   * Toggle spatial debug overlay: red = Bill No, green = Totals, blue = table rows.
+   * Uses OCRModule.lastOcrWords and lastOcrScale; scales bboxes to preview image.
+   */
+  toggleExtractionZones() {
+    const btn = document.getElementById('toggleZonesBtn');
+    const canvas = document.getElementById('zonesOverlay');
+    const img = document.getElementById('previewImage');
+    if (!canvas || !img || !img.src) return;
+
+    const showing = canvas.style.display !== 'none';
+    if (showing) {
+      canvas.style.display = 'none';
+      if (btn) btn.querySelector('.btn-text').textContent = 'Show extraction zones';
+      return;
+    }
+
+    const words = OCRModule.lastOcrWords;
+    const scale = OCRModule.lastOcrScale || 1;
+    if (!words || !words.length) {
+      this.showToast('No OCR word data. Run Extract Data first.', 'error');
+      return;
+    }
+
+    if (!window.SpatialExtractor || typeof window.SpatialExtractor.getDebugZones !== 'function') {
+      this.showToast('Debug zones not available.', 'error');
+      return;
+    }
+
+    const zones = window.SpatialExtractor.getDebugZones(words);
+    const w = img.offsetWidth;
+    const h = img.offsetHeight;
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+
+    const sx = w / nw;
+    const sy = h / nh;
+    const invScale = 1 / scale;
+    function toCanvas(b) {
+      return {
+        x0: (b.x0 * invScale) * sx,
+        y0: (b.y0 * invScale) * sy,
+        x1: (b.x1 * invScale) * sx,
+        y1: (b.y1 * invScale) * sy
+      };
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = 2;
+
+    zones.billNo.forEach((b) => {
+      const c = toCanvas(b);
+      ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+      ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
+    });
+    zones.totals.forEach((b) => {
+      const c = toCanvas(b);
+      ctx.strokeStyle = 'rgba(40, 167, 69, 0.9)';
+      ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
+    });
+    zones.tableRows.forEach((row) => {
+      row.forEach((b) => {
+        const c = toCanvas(b);
+        ctx.strokeStyle = 'rgba(0, 123, 255, 0.9)';
+        ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
+      });
+    });
+
+    if (btn) btn.querySelector('.btn-text').textContent = 'Hide extraction zones';
+  },
+
+  /**
+   * Show modal with record details (generic or NEW GOOD NITS structured).
    */
   showModal(record) {
     const modal = document.getElementById('recordModal');
     const modalBody = document.getElementById('modalBody');
-    
-    const imagePreview = record.imageData 
+
+    const imagePreview = record.imageData
       ? `<div class="record-image-preview"><img src="${record.imageData}" alt="Bill image" /></div>`
       : '<p class="no-image">No image available</p>';
 
-    modalBody.innerHTML = `
-      ${imagePreview}
-      <div class="record-details-grid">
-        <div class="detail-item">
-          <label>Bill Number:</label>
-          <span>${record.billNo}</span>
+    if (record.template === 'NEW_GOOD_NITS' && record.customer && typeof record.customer === 'object') {
+      const c = record.customer;
+      const b = record.billMeta || {};
+      const t = record.totals || {};
+      let tableHtml = '';
+      if (record.table && record.table.length > 0) {
+        tableHtml = `
+          <div class="detail-section">
+            <label>Table (${record.table.length} rows)</label>
+            <div class="table-wrapper"><table class="template-table">
+              <thead><tr><th>Sl No</th><th>DC</th><th>Date</th><th>GG</th><th>Fabric</th><th>Counts</th><th>Mill</th><th>Dia</th><th>Wt</th><th>Rate</th><th>Amount</th></tr></thead>
+              <tbody>
+                ${record.table.map((r) => `<tr><td>${r.slNo}</td><td>${r.dc}</td><td>${r.date}</td><td>${r.gg}</td><td>${r.fabric}</td><td>${r.counts}</td><td>${r.mill}</td><td>${r.dia}</td><td>${r.weight}</td><td>${r.rate}</td><td>${r.amount}</td></tr>`).join('')}
+              </tbody>
+            </table></div>
+          </div>
+        `;
+      }
+      modalBody.innerHTML = `
+        ${imagePreview}
+        <div class="record-details-grid">
+          <div class="detail-item"><label>Customer:</label><span>${c.name || '-'}</span></div>
+          <div class="detail-item full-width"><label>Address:</label><span>${c.address || '-'}</span></div>
+          <div class="detail-item"><label>GST No:</label><span>${c.gstNo || '-'}</span></div>
+          <div class="detail-item"><label>State:</label><span>${c.state || '-'}</span></div>
+          <div class="detail-item"><label>Bill No:</label><span>${b.billNo || record.billNo}</span></div>
+          <div class="detail-item"><label>Date:</label><span>${new Date(record.date).toLocaleDateString()}</span></div>
+          <div class="detail-item"><label>Job No:</label><span>${b.jobNo || '-'}</span></div>
+          <div class="detail-item"><label>Party DC No:</label><span>${b.partyDcNo || '-'}</span></div>
+          <div class="detail-item"><label>Subtotal:</label><span>₹${parseFloat(t.subtotal || 0).toFixed(2)}</span></div>
+          <div class="detail-item"><label>CGST 2.5%:</label><span>₹${parseFloat(t.cgst || 0).toFixed(2)}</span></div>
+          <div class="detail-item"><label>SGST 2.5%:</label><span>₹${parseFloat(t.sgst || 0).toFixed(2)}</span></div>
+          <div class="detail-item"><label>Net Total:</label><span>₹${parseFloat(record.total).toFixed(2)}</span></div>
+          <div class="detail-item"><label>Created:</label><span>${new Date(record.createdAt).toLocaleString()}</span></div>
+          <div class="detail-item"><label>Sync:</label><span class="sync-badge ${record.synced ? 'synced' : 'not-synced'}">${record.synced ? '✓ Synced' : '⚠ Not Synced'}</span></div>
+          ${tableHtml}
         </div>
-        <div class="detail-item">
-          <label>Date:</label>
-          <span>${new Date(record.date).toLocaleDateString()}</span>
+      `;
+    } else {
+      modalBody.innerHTML = `
+        ${imagePreview}
+        <div class="record-details-grid">
+          <div class="detail-item">
+            <label>Bill Number:</label>
+            <span>${record.billNo}</span>
+          </div>
+          <div class="detail-item">
+            <label>Date:</label>
+            <span>${new Date(record.date).toLocaleDateString()}</span>
+          </div>
+          <div class="detail-item">
+            <label>Customer Name:</label>
+            <span>${record.customer}</span>
+          </div>
+          <div class="detail-item">
+            <label>GST Amount:</label>
+            <span>₹${parseFloat(record.gst || 0).toFixed(2)}</span>
+          </div>
+          <div class="detail-item">
+            <label>Total Amount:</label>
+            <span>₹${parseFloat(record.total).toFixed(2)}</span>
+          </div>
+          <div class="detail-item">
+            <label>Created:</label>
+            <span>${new Date(record.createdAt).toLocaleString()}</span>
+          </div>
+          <div class="detail-item">
+            <label>Sync Status:</label>
+            <span class="sync-badge ${record.synced ? 'synced' : 'not-synced'}">
+              ${record.synced ? '✓ Synced' : '⚠ Not Synced'}
+            </span>
+          </div>
         </div>
-        <div class="detail-item">
-          <label>Customer Name:</label>
-          <span>${record.customer}</span>
-        </div>
-        <div class="detail-item">
-          <label>GST Amount:</label>
-          <span>₹${parseFloat(record.gst || 0).toFixed(2)}</span>
-        </div>
-        <div class="detail-item">
-          <label>Total Amount:</label>
-          <span>₹${parseFloat(record.total).toFixed(2)}</span>
-        </div>
-        <div class="detail-item">
-          <label>Created:</label>
-          <span>${new Date(record.createdAt).toLocaleString()}</span>
-        </div>
-        <div class="detail-item">
-          <label>Sync Status:</label>
-          <span class="sync-badge ${record.synced ? 'synced' : 'not-synced'}">
-            ${record.synced ? '✓ Synced' : '⚠ Not Synced'}
-          </span>
-        </div>
-      </div>
-    `;
-    
+      `;
+    }
+
     modal.style.display = 'flex';
   },
 
@@ -1024,6 +1321,42 @@ const OCRModule = {
   currentWorker: null,
   isScanning: false,
   cancelRequested: false,
+  lastOcrScale: 1,
+  lastOcrWords: null,
+
+  /**
+   * Upscale image 2x before OCR to improve word segmentation (DPI / resolution).
+   * Returns { blob, originalWidth, originalHeight } so bboxes can be scaled back for overlay.
+   */
+  async upscaleImageForOcr(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve({ blob, originalWidth: w, originalHeight: h });
+            else reject(new Error("Canvas toBlob failed"));
+          },
+          "image/jpeg",
+          0.92
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Image load failed"));
+      };
+      img.src = url;
+    });
+  },
 
   /**
    * Extract text from bill image using Tesseract.js OCR
@@ -1037,29 +1370,10 @@ const OCRModule = {
       return;
     }
 
-    // Check image quality before OCR (PRE-OCR GATE)
-    UIModule.showLoading('Checking image quality...');
+    // Check image quality (advisory only — never block extraction)
+    UIModule.showLoading('Checking image...');
     const quality = await ImageQualityModule.analyzeQuality(file);
-    
-    if (quality.overall === 'poor') {
-      // Check if user has already acknowledged the warning
-      const qualityWarning = document.getElementById('qualityWarning');
-      const userAcknowledged = StorageModule.qualityWarningAcknowledged || false;
-      
-      if (!userAcknowledged) {
-        // BLOCK OCR - Show warning and prevent scan
-        UIModule.hideLoading();
-        UIModule.showQualityWarning(quality);
-        UIModule.showToast('Image quality is low. Please re-upload or re-scan for better accuracy.', 'warning');
-        
-        // Hide cancel button since scan hasn't started
-        const cancelBtn = document.getElementById('cancelScanBtn');
-        if (cancelBtn) cancelBtn.style.display = 'none';
-        
-        return; // Block OCR execution
-      }
-      // User has acknowledged - allow scan to proceed
-    }
+    const qualityWasPoor = quality.overall === 'poor';
 
     // Get scan mode (default to 'quick')
     const scanMode = StorageModule.currentScanMode || 'quick';
@@ -1073,9 +1387,9 @@ const OCRModule = {
 
     try {
       if (scanMode === 'full') {
-        await this.performFullScan(file);
+        await this.performFullScan(file, qualityWasPoor);
       } else {
-        await this.performQuickScan(file);
+        await this.performQuickScan(file, qualityWasPoor);
       }
     } catch (error) {
       if (error.message !== 'Scan cancelled') {
@@ -1093,17 +1407,33 @@ const OCRModule = {
   },
 
   /**
-   * Perform quick scan (single OCR pass)
+   * Perform quick scan (single OCR pass).
+   * Upscales image 2x before OCR; uses PSM 6 and filters low-confidence words.
+   * @param {File} file
+   * @param {boolean} [qualityWasPoor] - Advisory: show recovery-mode banner if true
    */
-  async performQuickScan(file) {
-    UIModule.showLoading('Performing Quick Scan...');
-    
+  async performQuickScan(file, qualityWasPoor = false) {
+    UIModule.showLoading('Preparing image & performing OCR...');
+
+    let imageSource = file;
+    this.lastOcrScale = 1;
+    try {
+      const { blob, originalWidth, originalHeight } = await this.upscaleImageForOcr(file);
+      imageSource = blob;
+      this.lastOcrScale = 2;
+      this._lastOriginalSize = { w: originalWidth, h: originalHeight };
+    } catch (e) {
+      console.warn('Upscale failed, using original image:', e.message);
+    }
+
     const worker = await Tesseract.createWorker('eng');
     this.currentWorker = worker;
-    
-    // Configure OCR for better accuracy
+
     await worker.setParameters({
+      tessedit_pageseg_mode: 6,
+      preserve_interword_spaces: '1',
       tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.- ',
+      tessedit_char_blacklist: '`~!@#$%^&*_=+[]{}<>|\\'
     });
 
     if (this.cancelRequested) {
@@ -1111,45 +1441,62 @@ const OCRModule = {
       throw new Error('Scan cancelled');
     }
 
-    const { data } = await worker.recognize(file);
+    const { data } = await worker.recognize(imageSource);
     await worker.terminate();
     this.currentWorker = null;
+
+    const minConfidence = 40;
+    const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) >= minConfidence);
+    this.lastOcrWords = wordsFiltered;
 
     const extractedText = data.text;
     const overallConfidence = data.confidence / 100;
 
-    // Extract structured data with confidence tracking (use template if available)
-    const companyName = 'new-goo-nits'; // Can be made dynamic based on user selection
-    const { billData, fieldConfidences } = DataExtractionModule.extractBillDataWithConfidence(extractedText, data, companyName);
-    
+    const ocrPayload = { ...data, words: wordsFiltered };
+    const companyName = 'new-goo-nits';
+    const extraction = DataExtractionModule.extractBillDataWithConfidence(extractedText, ocrPayload, companyName);
+    const { billData, fieldConfidences, structuredData } = extraction;
+
     UIModule.hideLoading();
-    UIModule.showOCRResults(billData, overallConfidence, fieldConfidences);
-    UIModule.showToast('Quick scan completed! Please verify the information.', 'success');
+    UIModule.showNewGoodNitsResults(structuredData || DataExtractionModule.buildFallbackNgnPayload(billData), billData, fieldConfidences, overallConfidence, qualityWasPoor);
+    UIModule.showToast('Extraction completed. Please verify the information.', 'success');
   },
 
   /**
-   * Perform full scan (multiple OCR passes with result merging)
+   * Perform full scan (multiple OCR passes with result merging).
+   * Upscales image 2x per pass; PSM 6; filters words by confidence >= 40.
    */
-  async performFullScan(file) {
-    UIModule.showLoading('Performing Full Scan (Pass 1/3)...');
-    
+  async performFullScan(file, qualityWasPoor = false) {
+    UIModule.showLoading('Preparing image & performing Full Scan (Pass 1/3)...');
+
+    let imageSource = file;
+    this.lastOcrScale = 1;
+    try {
+      const { blob } = await this.upscaleImageForOcr(file);
+      imageSource = blob;
+      this.lastOcrScale = 2;
+    } catch (e) {
+      console.warn('Upscale failed, using original image:', e.message);
+    }
+
     const passes = 3;
     const results = [];
     const allTexts = [];
+    const minConfidence = 40;
 
-    // Perform multiple OCR passes
     for (let i = 0; i < passes; i++) {
-      if (this.cancelRequested) {
-        throw new Error('Scan cancelled');
-      }
+      if (this.cancelRequested) throw new Error('Scan cancelled');
 
       UIModule.showLoading(`Performing Full Scan (Pass ${i + 1}/${passes})...`);
-      
+
       const worker = await Tesseract.createWorker('eng');
       this.currentWorker = worker;
-      
+
       await worker.setParameters({
+        tessedit_pageseg_mode: 6,
+        preserve_interword_spaces: '1',
         tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.- ',
+        tessedit_char_blacklist: '`~!@#$%^&*_=+[]{}<>|\\'
       });
 
       if (this.cancelRequested) {
@@ -1157,24 +1504,29 @@ const OCRModule = {
         throw new Error('Scan cancelled');
       }
 
-      const { data } = await worker.recognize(file);
+      const { data } = await worker.recognize(imageSource);
       await worker.terminate();
       this.currentWorker = null;
+
+      const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) >= minConfidence);
+      if (i === 0) this.lastOcrWords = wordsFiltered;
 
       results.push({
         text: data.text,
         confidence: data.confidence / 100,
-        words: data.words || []
+        words: wordsFiltered
       });
       allTexts.push(data.text);
     }
 
     // Merge results from multiple passes
     const mergedData = this.mergeScanResults(results);
-    
+
     UIModule.hideLoading();
-    UIModule.showOCRResults(mergedData.billData, mergedData.overallConfidence, mergedData.fieldConfidences);
-    UIModule.showToast('Full scan completed! Multiple passes merged for higher accuracy.', 'success');
+    // Always show full NEW GOOD NITS template form
+    const payload = mergedData.structuredData || DataExtractionModule.buildFallbackNgnPayload(mergedData.billData);
+    UIModule.showNewGoodNitsResults(payload, mergedData.billData, mergedData.fieldConfidences, mergedData.overallConfidence, qualityWasPoor);
+    UIModule.showToast('Full scan completed. Please verify the information.', 'success');
   },
 
   /**
@@ -1191,6 +1543,9 @@ const OCRModule = {
         confidence: result.confidence
       };
     });
+
+    // Use first pass structured data for NEW GOOD NITS template form
+    const structuredData = allExtractions[0].structuredData || null;
 
     // Merge by finding most frequent/consistent values
     const merged = {
@@ -1218,7 +1573,8 @@ const OCRModule = {
     return {
       billData: merged,
       fieldConfidences,
-      overallConfidence
+      overallConfidence,
+      structuredData
     };
   },
 
@@ -1496,18 +1852,66 @@ const DataExtractionModule = {
     return { billData, fieldConfidences };
   },
 
+  /**
+   * Get structured data for NEW GOOD NITS template (customer, billMeta, table, totals).
+   * Used by UI to show template-specific form.
+   */
+  getCurrentStructuredData() {
+    return this._lastStructuredData || null;
+  },
+
+  /**
+   * Build fallback NGN payload from generic billData when template not detected.
+   * Ensures full NGN form always has a valid structure (some fields may be empty).
+   */
+  buildFallbackNgnPayload(billData = {}) {
+    const b = billData;
+    return {
+      customer: {
+        name: b.customer || null,
+        address: "",
+        gstNo: null,
+        state: null
+      },
+      billMeta: {
+        billNo: b.billNo || null,
+        date: b.date || null,
+        jobNo: null,
+        partyDcNo: null
+      },
+      table: [],
+      totals: {
+        subtotal: null,
+        cgst: b.gst ? String(parseFloat(b.gst) / 2) : null,
+        sgst: b.gst ? String(parseFloat(b.gst) / 2) : null,
+        roundedOff: null,
+        netTotal: b.total ? String(b.total).replace(/,/g, "") : null
+      }
+    };
+  },
+
   extractBillDataWithConfidence(text, ocrData = {}, companyName = null) {
     // Use Intelligent Extraction Module when NEW GOOD NITS template is detected
     if (typeof window !== 'undefined' && window.TemplateEngine) {
       const template = window.TemplateEngine.detectTemplate(text);
       if (template === 'NEW_GOOD_NITS') {
         try {
-          const structured = window.TemplateEngine.extractData(text);
-          return this._mapNewGoodNitsToBillData(structured, ocrData);
+          const words = ocrData.words || [];
+          const structured = words.length > 0 && window.TemplateEngine.extractDataWithWords
+            ? window.TemplateEngine.extractDataWithWords(words, text)
+            : window.TemplateEngine.extractData(text);
+          this._lastStructuredData = structured;
+          const mapped = this._mapNewGoodNitsToBillData(structured, ocrData);
+          return { ...mapped, structuredData: structured };
         } catch (err) {
           console.warn('Template extraction failed, falling back to generic:', err.message);
+          this._lastStructuredData = null;
         }
+      } else {
+        this._lastStructuredData = null;
       }
+    } else {
+      this._lastStructuredData = null;
     }
 
     const billData = this.extractBillData(text, companyName);
@@ -1829,6 +2233,105 @@ const DataModule = {
         UIModule.switchView('records');
       }, 1000);
 
+    } catch (error) {
+      console.error('Save error:', error);
+      UIModule.showToast(error.message || 'Failed to save bill. Please try again.', 'error');
+    }
+  },
+
+  /**
+   * Save NEW GOOD NITS template bill from the template-specific form.
+   */
+  async saveNewGoodNitsBill() {
+    const customerName = document.getElementById('ngnCustomerName').value.trim();
+    const billNo = document.getElementById('ngnBillNo').value.trim();
+    const dateVal = document.getElementById('ngnDate').value;
+    const netTotal = document.getElementById('ngnNetTotal').value;
+
+    if (!billNo) {
+      UIModule.showToast('Bill No is required', 'error');
+      document.getElementById('ngnBillNo').focus();
+      return;
+    }
+    if (!dateVal) {
+      UIModule.showToast('Date is required', 'error');
+      document.getElementById('ngnDate').focus();
+      return;
+    }
+    if (!customerName) {
+      UIModule.showToast('Customer Name is required', 'error');
+      document.getElementById('ngnCustomerName').focus();
+      return;
+    }
+    if (!netTotal || parseFloat(netTotal) <= 0) {
+      UIModule.showToast('Net Total is required and must be greater than 0', 'error');
+      document.getElementById('ngnNetTotal').focus();
+      return;
+    }
+
+    const duplicateCheck = await ValidationModule.checkDuplicateBillNo(billNo);
+    if (duplicateCheck.isDuplicate) {
+      UIModule.showToast(duplicateCheck.message, 'error');
+      return;
+    }
+
+    const customer = {
+      name: customerName,
+      address: document.getElementById('ngnCustomerAddress').value.trim(),
+      gstNo: document.getElementById('ngnCustomerGst').value.trim() || null,
+      state: document.getElementById('ngnCustomerState').value.trim() || null
+    };
+    const billMeta = {
+      billNo,
+      date: dateVal,
+      jobNo: document.getElementById('ngnJobNo').value.trim() || null,
+      partyDcNo: document.getElementById('ngnPartyDcNo').value.trim() || null
+    };
+    const totals = {
+      subtotal: document.getElementById('ngnSubtotal').value.trim() || null,
+      cgst: document.getElementById('ngnCgst').value.trim() || null,
+      sgst: document.getElementById('ngnSgst').value.trim() || null,
+      roundedOff: document.getElementById('ngnRoundedOff').value.trim() || null,
+      netTotal: document.getElementById('ngnNetTotal').value.trim() || null
+    };
+
+    const table = [];
+    document.querySelectorAll('#ngnTableBody tr').forEach((tr) => {
+      const inputs = tr.querySelectorAll('input');
+      if (inputs.length < 11) return;
+      table.push({
+        slNo: inputs[0].value || null,
+        dc: inputs[1].value || null,
+        date: inputs[2].value || null,
+        gg: inputs[3].value || null,
+        fabric: inputs[4].value || null,
+        counts: inputs[5].value || null,
+        mill: inputs[6].value || null,
+        dia: inputs[7].value || null,
+        weight: parseFloat(inputs[8].value) || 0,
+        rate: parseFloat(inputs[9].value) || 0,
+        amount: parseFloat(inputs[10].value) || 0
+      });
+    });
+
+    const record = {
+      template: 'NEW_GOOD_NITS',
+      customer,
+      billMeta,
+      table,
+      totals,
+      billNo,
+      date: dateVal,
+      customer: customerName,
+      gst: parseFloat(totals.cgst || 0) + parseFloat(totals.sgst || 0),
+      total: parseFloat(netTotal)
+    };
+
+    try {
+      await StorageModule.saveBill(record);
+      UIModule.showToast('Bill saved successfully!', 'success');
+      UIModule.clearForm();
+      setTimeout(() => UIModule.switchView('records'), 1000);
     } catch (error) {
       console.error('Save error:', error);
       UIModule.showToast(error.message || 'Failed to save bill. Please try again.', 'error');

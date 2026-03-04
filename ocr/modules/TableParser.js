@@ -1,83 +1,146 @@
 /**
- * TableParser.js — Line-based table row detection and column extraction.
- * Uses flexible date format and extracts weight/rate/amount from end of row for robustness.
+ * TableParser.js — Backward numeric parsing for low-clarity OCR.
+ * Uses OCR correction (O→0, I→1, S→5, B→8) so "125.SO" and "2I0" parse correctly.
  */
 
-/** Flexible date pattern: 10/1/2026, 10-01-2026, 10.01.2026 */
-const FLEXIBLE_DATE = /\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}/;
-/** Weight: 3 decimals (or 2 if OCR drops one) */
-const WEIGHT_PATTERN = /\d+\.\d{2,3}/;
-/** Amount: 1–2 decimals at end of line */
-const AMOUNT_AT_END = /\d+\.\d{1,2}\s*$/;
+import { parseRepairedNumber } from "./OcrCorrection.js";
+
+const FUZZY_TOTAL = /T[O0D]?TAL|TOTAL|TOIAL|TDTAL/i;
+const NUMERIC_TOKEN = /[\d,]+\.?\d*/g;
 
 /**
- * Detect if a line is a table data row (flexible date + weight + amount at end).
- * @param {string} line - Single line of text
- * @returns {boolean}
+ * Extract numeric tokens from line; try repaired parse for broken OCR (e.g. 125.SO → 125.50, 2I0 → 210).
  */
-export function isTableRow(line) {
-  return (
-    FLEXIBLE_DATE.test(line) &&
-    WEIGHT_PATTERN.test(line) &&
-    AMOUNT_AT_END.test(line)
-  );
+function getNumericTokens(line) {
+  const tokens = [];
+  const values = [];
+  const re = /[\d,]+\.?[\dA-Za-z]*/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    const raw = m[0].replace(/,/g, "");
+    let v = parseFloat(raw);
+    if (!Number.isFinite(v)) v = parseRepairedNumber(m[0]);
+    if (v != null && Number.isFinite(v)) {
+      tokens.push(m[0]);
+      values.push(v);
+    }
+  }
+  return { tokens, values };
 }
 
 /**
- * Parse table section from full OCR text into structured rows.
- * Extracts amount, rate, weight from end of row (last 3 columns); rest maps to slNo, dc, date, gg, fabric, counts, mill, dia.
- * Fabric can contain spaces (e.g. "COTTON RIB"). Only pushes row if weight/rate/amount parse as numbers.
+ * Check if line looks like a table row: has at least 3 numeric tokens, last looks like amount (decimal).
+ * Fallback: decimal, then number, then decimal (weight, rate, amount).
+ */
+function looksLikeTableRow(line) {
+  const { values } = getNumericTokens(line);
+  if (values.length < 3) return false;
+  const a = values[values.length - 1];
+  const r = values[values.length - 2];
+  const w = values[values.length - 3];
+  if (!Number.isFinite(a) || !Number.isFinite(r) || !Number.isFinite(w)) return false;
+  if (a <= 0 || a > 1e10) return false;
+  return true;
+}
+
+/**
+ * Parse a single line using backward numeric: last 3 = amount, rate, weight; rest = leading columns.
+ */
+function parseRowBackward(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  const { values, tokens } = getNumericTokens(trimmed);
+  if (values.length < 3) return null;
+
+  const amount = values[values.length - 1];
+  const rate = values[values.length - 2];
+  const weight = values[values.length - 3];
+  if (!Number.isFinite(amount) || !Number.isFinite(rate) || !Number.isFinite(weight)) return null;
+
+  const thirdLastToken = tokens[tokens.length - 3];
+  const startOfLastThree = trimmed.indexOf(thirdLastToken);
+  const leadingStr = startOfLastThree >= 0 ? trimmed.slice(0, startOfLastThree).trim() : "";
+  const leading = leadingStr ? leadingStr.split(/\s+/) : [];
+
+  const slNo = leading[0] ?? null;
+  const dc = leading[1] ?? null;
+  const date = leading[2] ?? null;
+  const gg = leading[3] ?? null;
+  const counts = leading.length >= 7 ? leading[leading.length - 3] : null;
+  const mill = leading.length >= 7 ? leading[leading.length - 2] : null;
+  const dia = leading.length >= 7 ? leading[leading.length - 1] : null;
+  const fabric = leading.length >= 8 ? leading.slice(4, -3).join(" ").trim() || null : null;
+
+  return {
+    slNo,
+    dc,
+    date,
+    gg,
+    fabric: fabric || null,
+    counts,
+    mill,
+    dia,
+    weight,
+    rate,
+    amount
+  };
+}
+
+/**
+ * Find index of first line matching TOTAL (fuzzy). Table rows are above this.
+ */
+function findTotalLineIndex(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    if (FUZZY_TOTAL.test(lines[i])) return i;
+  }
+  return lines.length;
+}
+
+/**
+ * Find index of header line (S.No, D.C., Fabric, Wt, Rate, Amount). Rows start after this.
+ */
+function findHeaderLineIndex(lines) {
+  const headerKeywords = /S\.?\s*No|D\.?\s*C\.?|Fabric|Wt\.?\s*Kgs|Rate|Amount/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (headerKeywords.test(lines[i])) return i;
+  }
+  return -1;
+}
+
+/**
+ * Parse table using backward numeric parsing. Only consider lines between header and TOTAL.
+ * If no header, use fallback: any line with ≥3 numeric tokens (amount, rate, weight at end).
  * @param {string} text - Full OCR text (prefer normalized)
  * @returns {Array<Object>} Array of row objects
  */
 export function parseTable(text) {
   const lines = text.split("\n");
+  const totalIdx = findTotalLineIndex(lines);
+  const headerIdx = findHeaderLineIndex(lines);
+  const startIdx = headerIdx >= 0 ? headerIdx + 1 : 0;
+  const endIdx = totalIdx;
+
   const rows = [];
-  let loggedOnce = false;
+  for (let i = startIdx; i < endIdx; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    if (FUZZY_TOTAL.test(line) || /CGST|SGST|NET\s*T/i.test(line)) break;
+    if (!looksLikeTableRow(line)) continue;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || !isTableRow(trimmed)) continue;
+    const row = parseRowBackward(line);
+    if (row) rows.push(row);
+  }
 
-    const parts = trimmed.split(/\s+/);
-    if (parts.length < 10) continue;
-
-    const amount = parseFloat(parts[parts.length - 1]);
-    const rate = parseFloat(parts[parts.length - 2]);
-    const weight = parseFloat(parts[parts.length - 3]);
-
-    if (!Number.isFinite(amount) || !Number.isFinite(rate) || !Number.isFinite(weight)) {
-      continue;
+  if (rows.length === 0) {
+    for (let i = 0; i < endIdx; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      if (FUZZY_TOTAL.test(line) || /CGST|SGST|NET\s*T/i.test(line)) break;
+      if (!looksLikeTableRow(line)) continue;
+      const row = parseRowBackward(line);
+      if (row) rows.push(row);
     }
-
-    if (!loggedOnce) {
-      console.log("[TableParser] parts sample (end-based):", parts);
-      loggedOnce = true;
-    }
-
-    const leading = parts.slice(0, -3);
-    const slNo = leading[0] ?? null;
-    const dc = leading[1] ?? null;
-    const date = leading[2] ?? null;
-    const gg = leading[3] ?? null;
-    const fabric = leading.length >= 8 ? leading.slice(4, -3).join(" ").trim() || null : null;
-    const counts = leading[leading.length - 3] ?? null;
-    const mill = leading[leading.length - 2] ?? null;
-    const dia = leading[leading.length - 1] ?? null;
-
-    rows.push({
-      slNo,
-      dc,
-      date,
-      gg,
-      fabric,
-      counts,
-      mill,
-      dia,
-      weight,
-      rate,
-      amount
-    });
   }
 
   return rows;

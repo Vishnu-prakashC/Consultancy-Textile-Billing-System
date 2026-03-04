@@ -50,6 +50,7 @@
             
             <div class="image-preview-wrapper">
               <img id="previewImage" alt="Bill preview" />
+              <canvas id="zonesOverlay" class="zones-overlay" style="display: none;" aria-hidden="true"></canvas>
               <button class="btn-icon remove-image" id="removeImage" title="Remove image">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                   <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -158,6 +159,127 @@
             </button>
             <button class="btn btn-secondary" onclick="UIModule.clearForm()">Reset Form</button>
             <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Bill</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- NEW GOOD NITS Template-Specific Results -->
+      <div class="card ocr-results-card template-results-card" id="newGoodNitsResultsCard" style="display: none;">
+        <div class="card-header">
+          <h2>NEW GOOD NITS — Extracted Invoice</h2>
+          <p class="helper-text warning-text">Verify and edit below before saving.</p>
+        </div>
+        <div class="card-body template-sections">
+          <div class="ocr-confidence" id="ngnOcrConfidence"></div>
+
+          <section class="template-section template-section-customer">
+            <h3>👤 Customer</h3>
+            <div class="form-grid form-grid-2">
+              <div class="form-group full-width">
+                <label for="ngnCustomerName">Customer Name <span class="required">*</span></label>
+                <input type="text" id="ngnCustomerName" class="form-input" placeholder="Customer name">
+              </div>
+              <div class="form-group full-width">
+                <label for="ngnCustomerAddress">Address</label>
+                <input type="text" id="ngnCustomerAddress" class="form-input" placeholder="Address">
+              </div>
+              <div class="form-group">
+                <label for="ngnCustomerGst">GST No</label>
+                <input type="text" id="ngnCustomerGst" class="form-input" placeholder="GST No">
+              </div>
+              <div class="form-group">
+                <label for="ngnCustomerState">State</label>
+                <input type="text" id="ngnCustomerState" class="form-input" placeholder="State">
+              </div>
+            </div>
+          </section>
+
+          <section class="template-section template-section-billmeta">
+            <h3>📦 Bill Meta</h3>
+            <div class="form-grid form-grid-2">
+              <div class="form-group">
+                <label for="ngnBillNo">Bill No <span class="required">*</span></label>
+                <input type="text" id="ngnBillNo" class="form-input" placeholder="Bill No">
+              </div>
+              <div class="form-group">
+                <label for="ngnDate">Date <span class="required">*</span></label>
+                <input type="date" id="ngnDate" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="ngnJobNo">Job No</label>
+                <input type="text" id="ngnJobNo" class="form-input" placeholder="Job No">
+              </div>
+              <div class="form-group">
+                <label for="ngnPartyDcNo">Party DC No</label>
+                <input type="text" id="ngnPartyDcNo" class="form-input" placeholder="Party DC No">
+              </div>
+            </div>
+          </section>
+
+          <section class="template-section template-section-table">
+            <h3>📊 Table</h3>
+            <div class="table-toolbar">
+              <button type="button" class="btn btn-sm btn-outline" id="ngnAddRowBtn" title="Add row">
+                <span class="btn-text">+ Add Row</span>
+              </button>
+              <button type="button" class="btn btn-sm btn-outline btn-danger-outline" id="ngnDeleteRowBtn" title="Delete last row">
+                <span class="btn-text">− Delete Row</span>
+              </button>
+              <span class="table-toolbar-hint" id="ngnTableRowCount">0 rows</span>
+            </div>
+            <div class="table-wrapper">
+              <table class="template-table" id="ngnTable">
+                <thead>
+                  <tr>
+                    <th>Sl No</th><th>DC</th><th>Date</th><th>GG</th><th>Fabric</th><th>Counts</th><th>Mill</th><th>Dia</th><th>Wt Kgs</th><th>Rate</th><th>Amount</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="ngnTableBody"></tbody>
+              </table>
+            </div>
+            <p class="helper-text table-helper">Edit cells then use <strong>Recalc totals</strong> to update Subtotal / Net Total.</p>
+          </section>
+
+          <section class="template-section template-section-totals">
+            <h3>💰 Totals</h3>
+            <div class="totals-toolbar">
+              <button type="button" class="btn btn-sm btn-outline" id="ngnRecalcTotalsBtn">
+                <span class="btn-text">🔄 Recalc totals</span>
+              </button>
+            </div>
+            <div class="form-grid form-grid-2">
+              <div class="form-group">
+                <label for="ngnSubtotal">Subtotal</label>
+                <input type="number" id="ngnSubtotal" class="form-input" step="0.01" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label for="ngnCgst">CGST 2.5%</label>
+                <input type="number" id="ngnCgst" class="form-input" step="0.01" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label for="ngnSgst">SGST 2.5%</label>
+                <input type="number" id="ngnSgst" class="form-input" step="0.01" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label for="ngnRoundedOff">Rounded Off</label>
+                <input type="number" id="ngnRoundedOff" class="form-input" step="0.01" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label for="ngnNetTotal">Net Total <span class="required">*</span></label>
+                <input type="number" id="ngnNetTotal" class="form-input" step="0.01" min="0" required placeholder="0">
+              </div>
+            </div>
+          </section>
+
+          <div class="form-actions">
+            <button class="btn btn-success" id="ngnSaveBtn" onclick="DataModule.saveNewGoodNitsBill()">
+              <span class="btn-text">Save Bill Record</span>
+            </button>
+            <button class="btn btn-secondary" onclick="UIModule.clearForm()">Reset Form</button>
+            <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Bill</button>
+            <button type="button" class="btn btn-outline" id="toggleZonesBtn" onclick="UIModule.toggleExtractionZones()" title="Show/hide OCR extraction zones on the image">
+              <span class="btn-text">Show extraction zones</span>
+            </button>
           </div>
         </div>
       </div>
