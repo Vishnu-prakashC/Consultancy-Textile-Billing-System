@@ -114,7 +114,14 @@ export async function processInvoice(img, options = {}) {
 
   const result = {
     ...billData,
-    company: headerData.companyName || (templateId === "NEW_GOOD_NITS" ? "NEW GOOD NITS" : undefined),
+    company: {
+      name: headerData.companyName || (templateId === "NEW_GOOD_NITS" ? "NEW GOOD NITS" : undefined),
+      gstin: headerData.gstin,
+      tin: headerData.tin,
+      pan: headerData.pan,
+      phones: headerData.phones,
+      address: headerData.address
+    },
     customer: customerData,
     table: tableRows,
     totals: totalsData,

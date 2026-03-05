@@ -25,6 +25,16 @@ export function mapToForm(data, options = {}) {
   set("ngnDate", formatDateForInput(data.date));
   set("ngnJobNo", data.jobNo);
   set("ngnPartyDcNo", data.partyDc);
+  set("ngnInvoiceType", data.invoiceType);
+
+  if (data.company) {
+    set("ngnCompanyName", data.company.name);
+    set("ngnCompanyAddress", data.company.address);
+    set("ngnCompanyGstin", data.company.gstin);
+    set("ngnCompanyTin", data.company.tin);
+    set("ngnCompanyPan", data.company.pan);
+    set("ngnCompanyPhone", data.company.phones ? data.company.phones.join(", ") : "");
+  }
 
   if (data.customer) {
     set("customer", data.customer.name || data.customer.customerName);
@@ -33,12 +43,15 @@ export function mapToForm(data, options = {}) {
     set("gst", data.customer.gstNumber || data.customer.gst);
     set("ngnCustomerGst", data.customer.gstNumber || data.customer.gst);
     set("ngnCustomerState", data.customer.state);
+    set("ngnCustomerPhone", data.customer.phone);
+    set("ngnCustomerEmail", data.customer.email);
   }
 
   if (data.totals) {
     set("ngnSubtotal", data.totals.subtotal);
     set("ngnCgst", data.totals.cgst);
     set("ngnSgst", data.totals.sgst);
+    set("ngnIgst", data.totals.igst);
     set("ngnRoundedOff", data.totals.roundedOff);
     set("ngnNetTotal", data.totals.netTotal);
     set("total", data.totals.netTotal);

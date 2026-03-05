@@ -766,15 +766,16 @@ const UIModule = {
 
   /**
    * Show NEW GOOD NITS template-specific results (section cards + table + totals).
-   * Always shows full form. If qualityWasPoor or low confidence, shows advisory recovery-mode banner (never blocks).
+   * Always shows full form. If qualityWasPoor or low confidence, shows advisory recovery-mode banner and "Why was extraction poor?" tips.
    */
-  showNewGoodNitsResults(structuredData, billData = {}, fieldConfidences = {}, overallConfidence = 0, qualityWasPoor = false) {
+  showNewGoodNitsResults(structuredData, billData = {}, fieldConfidences = {}, overallConfidence = 0, qualityWasPoor = false, scanInfo = {}) {
     document.getElementById('ocrResultsCard').style.display = 'none';
     const card = document.getElementById('newGoodNitsResultsCard');
     card.style.display = 'block';
 
     StorageModule.currentStructuredData = structuredData;
 
+    const usedOpenCV = scanInfo.usedOpenCV === true;
     const showRecoveryBanner = qualityWasPoor || (overallConfidence > 0 && overallConfidence < 0.7);
     let recoveryBannerHtml = '';
     if (showRecoveryBanner) {
@@ -796,6 +797,30 @@ const UIModule = {
       `;
     }
 
+    const confPercent = Math.round((overallConfidence * 100) || 0);
+    const isLowConfidence = confPercent < 55 || showRecoveryBanner;
+    const whyPoorHtml = isLowConfidence ? `
+      <div class="extraction-tips" id="extractionTipsSection">
+        <button type="button" class="extraction-tips-toggle" id="extractionTipsToggle" aria-expanded="false">
+          Why was extraction poor? Tips for better results
+        </button>
+        <div class="extraction-tips-content" id="extractionTipsContent" hidden>
+          <p><strong>Common reasons:</strong></p>
+          <ul>
+            <li><strong>Photo angle / perspective</strong> — Document looks tilted. Use <strong>Re-scan Bill</strong> after the page has fully loaded (so "Enhanced scanner" runs) so we can straighten and crop the document.</li>
+            <li><strong>Shadows or uneven lighting</strong> — Dark areas make text unreadable. Scan in good, even light.</li>
+            <li><strong>Handwriting or marks on the bill</strong> — Pen marks, ticks, or stamps over the table confuse OCR. Avoid covering numbers with pen.</li>
+            <li><strong>Phone number read as Bill No</strong> — If Bill No shows a 5-digit number (e.g. 98947), the scanner may have picked up the header phone. Re-scan with Enhanced scanner (wait a few seconds after opening the page).</li>
+            <li><strong>Faint or small text</strong> — Use a clearer photo or higher resolution.</li>
+          </ul>
+          <p><strong>What helps:</strong> Flatten the paper, avoid shadows, ensure "Enhanced scan" is used (see below), and Re-scan if the first result looks wrong.</p>
+        </div>
+      </div>
+    ` : '';
+
+    const scanModeLabel = usedOpenCV ? 'Enhanced scan (OpenCV)' : 'Basic scan';
+    const scanModeClass = usedOpenCV ? 'scan-mode-enhanced' : 'scan-mode-basic';
+
     const c = structuredData.customer || {};
     const b = structuredData.billMeta || {};
     const t = structuredData.totals || {};
@@ -804,6 +829,8 @@ const UIModule = {
     document.getElementById('ngnCustomerAddress').value = c.address || '';
     document.getElementById('ngnCustomerGst').value = c.gstNo || '';
     document.getElementById('ngnCustomerState').value = c.state || '';
+    document.getElementById('ngnCustomerPhone').value = c.phone || '';
+    document.getElementById('ngnCustomerEmail').value = c.email || '';
 
     document.getElementById('ngnBillNo').value = b.billNo || '';
     let dateStr = b.date || '';
@@ -814,10 +841,21 @@ const UIModule = {
     document.getElementById('ngnDate').value = dateStr || '';
     document.getElementById('ngnJobNo').value = b.jobNo || '';
     document.getElementById('ngnPartyDcNo').value = b.partyDcNo || '';
+    document.getElementById('ngnInvoiceType').value = b.invoiceType || '';
+
+    // Company fields
+    const company = structuredData.header || {};
+    document.getElementById('ngnCompanyName').value = company.companyName || '';
+    document.getElementById('ngnCompanyAddress').value = company.address || '';
+    document.getElementById('ngnCompanyGstin').value = company.gstin || '';
+    document.getElementById('ngnCompanyTin').value = company.tin || '';
+    document.getElementById('ngnCompanyPan').value = company.pan || '';
+    document.getElementById('ngnCompanyPhone').value = (company.phones || []).join(', ') || '';
 
     document.getElementById('ngnSubtotal').value = t.subtotal ? String(t.subtotal).replace(/,/g, '') : '';
     document.getElementById('ngnCgst').value = t.cgst ? String(t.cgst).replace(/,/g, '') : '';
     document.getElementById('ngnSgst').value = t.sgst ? String(t.sgst).replace(/,/g, '') : '';
+    document.getElementById('ngnIgst').value = t.igst ? String(t.igst).replace(/,/g, '') : '';
     document.getElementById('ngnRoundedOff').value = t.roundedOff ? String(t.roundedOff).replace(/,/g, '') : '';
     document.getElementById('ngnNetTotal').value = t.netTotal ? String(t.netTotal).replace(/,/g, '') : '';
 
@@ -846,13 +884,25 @@ const UIModule = {
     this.updateNgnTableRowCount();
     this.bindNgnTableActions();
 
-    const confPercent = Math.round((overallConfidence * 100) || 0);
     const confEl = document.getElementById('ngnOcrConfidence');
-    confEl.innerHTML = recoveryBannerHtml + `
-      <div class="confidence-badge ${confPercent >= 70 ? 'high' : confPercent >= 50 ? 'medium' : 'low'}">
-        <span>OCR Confidence: ${confPercent}%</span>
+    confEl.innerHTML = recoveryBannerHtml + whyPoorHtml + `
+      <div class="confidence-row">
+        <div class="confidence-badge ${confPercent >= 70 ? 'high' : confPercent >= 50 ? 'medium' : 'low'}">
+          <span>OCR Confidence: ${confPercent}%</span>
+        </div>
+        <span class="scan-mode-badge ${scanModeClass}" title="${usedOpenCV ? 'Document was aligned and enhanced before OCR' : 'OpenCV was not used; try Re-scan after page has loaded'}">${scanModeLabel}</span>
       </div>
     `;
+
+    const tipsToggle = document.getElementById('extractionTipsToggle');
+    const tipsContent = document.getElementById('extractionTipsContent');
+    if (tipsToggle && tipsContent) {
+      tipsToggle.addEventListener('click', () => {
+        const expanded = tipsContent.hidden;
+        tipsContent.hidden = !expanded;
+        tipsToggle.setAttribute('aria-expanded', String(!expanded));
+      });
+    }
 
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   },
@@ -1378,6 +1428,13 @@ const OCRModule = {
       return;
     }
 
+    // Show progress bar
+    const progressContainer = document.getElementById('ocrProgress');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    if (progressContainer) progressContainer.style.display = 'block';
+    this.updateProgress(0, 'Initializing...');
+
     // Check image quality (advisory only — never block extraction)
     UIModule.showLoading('Checking image...');
     const quality = await ImageQualityModule.analyzeQuality(file);
@@ -1411,7 +1468,16 @@ const OCRModule = {
       // Hide cancel button
       const cancelBtn = document.getElementById('cancelScanBtn');
       if (cancelBtn) cancelBtn.style.display = 'none';
+      // Hide progress
+      if (progressContainer) progressContainer.style.display = 'none';
     }
+  },
+
+  updateProgress(percent, text) {
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    if (progressFill) progressFill.style.width = percent + '%';
+    if (progressText) progressText.textContent = text;
   },
 
   /**
@@ -1419,14 +1485,23 @@ const OCRModule = {
    * When NEW GOOD NITS template is detected via header region, uses region-based OCR (crop → OCR per region → extract) for better accuracy. Otherwise full-page OCR.
    */
   async performQuickScan(file, qualityWasPoor = false) {
-    UIModule.showLoading('Preparing image & performing OCR...');
+    this.updateProgress(10, 'Preparing image & performing OCR...');
+
+    if (window.OpenCVPreprocess?.waitForOpenCV && !window.OpenCVPreprocess.isAvailable() &&
+        window.ImagePreprocessor?.cropRegions && window.TemplateEngine?.extractDataFromRegions) {
+      this.updateProgress(15, 'Loading enhanced scanner (OpenCV)...');
+      const opencvReady = await window.OpenCVPreprocess.waitForOpenCV(20000);
+      if (!opencvReady) console.warn('OpenCV did not load in time; using basic preprocessing.');
+    }
 
     let imageSource = file;
     this.lastOcrScale = 1;
+    this._usedOpenCVPreprocess = false;
     try {
       // Prefer OpenCV preprocessing for camera photos (perspective, deskew, noise, adaptive threshold)
+      // Skip OpenCV when image is too small to avoid "Image too small to scale" / "Line cannot be recognized" in console.
+      const minSizeForOpenCV = 50;
       if (typeof window !== 'undefined' && window.OpenCVPreprocess?.isAvailable?.() && window.OpenCVPreprocess.runOpenCVPreprocess) {
-        UIModule.showLoading('Preparing image (OpenCV: perspective, deskew, threshold)...');
         const img = await new Promise((resolve, reject) => {
           const url = URL.createObjectURL(file);
           const i = new Image();
@@ -1436,18 +1511,26 @@ const OCRModule = {
         });
         const origW = img.naturalWidth || img.width;
         const origH = img.naturalHeight || img.height;
-        const canvas = document.createElement('canvas');
-        canvas.width = origW * 2;
-        canvas.height = origH * 2;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const preprocessed = window.OpenCVPreprocess.runOpenCVPreprocess(canvas);
-        imageSource = await new Promise((res, rej) => {
-          preprocessed.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95);
-        });
-        this._lastOriginalSize = { w: preprocessed.width, h: preprocessed.height };
-        this.lastOcrScale = 1;
-      } else if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
+        const scaledW = origW * 2;
+        const scaledH = origH * 2;
+        if (scaledW >= minSizeForOpenCV && scaledH >= minSizeForOpenCV) {
+          this._usedOpenCVPreprocess = true;
+          this.updateProgress(20, 'Preparing image (OpenCV: perspective, deskew, threshold)...');
+          const canvas = document.createElement('canvas');
+          canvas.width = scaledW;
+          canvas.height = scaledH;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const preprocessed = window.OpenCVPreprocess.runOpenCVPreprocess(canvas);
+          imageSource = await new Promise((res, rej) => {
+            preprocessed.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95);
+          });
+          this._lastOriginalSize = { w: preprocessed.width, h: preprocessed.height };
+          this.lastOcrScale = 1;
+        }
+      }
+      if (!this._lastOriginalSize) {
+        if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
         const { blob, originalWidth, originalHeight } = await window.ImagePreprocessor.preprocessImage(file);
         imageSource = blob;
         this.lastOcrScale = 2;
@@ -1457,6 +1540,7 @@ const OCRModule = {
         imageSource = blob;
         this.lastOcrScale = 2;
         this._lastOriginalSize = { w: originalWidth, h: originalHeight };
+      }
       }
     } catch (e) {
       console.warn('Preprocess/upscale failed, using original image:', e.message);
@@ -1472,7 +1556,7 @@ const OCRModule = {
       try {
         const w = this._lastOriginalSize.w * this.lastOcrScale;
         const h = this._lastOriginalSize.h * this.lastOcrScale;
-        UIModule.showLoading('Cropping regions & scanning...');
+        this.updateProgress(30, 'Cropping regions & scanning...');
         const regions = await window.ImagePreprocessor.cropRegions(imageSource, w, h);
         if (this.cancelRequested) throw new Error('Scan cancelled');
 
@@ -1484,33 +1568,48 @@ const OCRModule = {
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
         });
 
-        const recognizeRegion = async (blob) => {
+        const recognizeRegion = async (blob, regionName) => {
           if (this.cancelRequested) return '';
+          // Set PSM based on region
+          if (regionName === 'table') {
+            await worker.setParameters({
+              tessedit_pageseg_mode: 11, // Sparse text for tables
+              preserve_interword_spaces: '1',
+              tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
+            });
+          } else {
+            await worker.setParameters({
+              tessedit_pageseg_mode: 6,
+              preserve_interword_spaces: '1',
+              tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
+            });
+          }
           const { data } = await worker.recognize(blob);
           return data.text || '';
         };
 
-        UIModule.showLoading('Detecting template (header)...');
-        const headerText = await recognizeRegion(regions.header);
+        this.updateProgress(40, 'Detecting template (header)...');
+        const headerText = await recognizeRegion(regions.header, 'header');
         const template = window.TemplateEngine.detectTemplate(headerText);
 
         if (template === 'NEW_GOOD_NITS') {
-          UIModule.showLoading('Scanning customer & bill meta...');
+          this.updateProgress(50, 'Scanning customer & bill meta...');
           const [customerText, billMetaText] = await Promise.all([
-            recognizeRegion(regions.customer),
-            recognizeRegion(regions.billMeta)
+            recognizeRegion(regions.customer, 'customer'),
+            recognizeRegion(regions.billMeta, 'billMeta')
           ]);
           if (this.cancelRequested) { await worker.terminate(); throw new Error('Scan cancelled'); }
-          UIModule.showLoading('Scanning table...');
-          const tableText = await recognizeRegion(regions.table);
+          this.updateProgress(70, 'Scanning table...');
+          const tableText = await recognizeRegion(regions.table, 'table');
           if (this.cancelRequested) { await worker.terminate(); throw new Error('Scan cancelled'); }
-          UIModule.showLoading('Scanning totals...');
-          const totalsText = await recognizeRegion(regions.totals);
+          this.updateProgress(90, 'Scanning totals...');
+          const totalsText = await recognizeRegion(regions.totals, 'totals');
 
           await worker.terminate();
           this.currentWorker = null;
 
           const structuredData = window.TemplateEngine.extractDataFromRegions({
+            header: headerText,
             customer: customerText,
             billMeta: billMetaText,
             table: tableText,
@@ -1519,8 +1618,9 @@ const OCRModule = {
           this.lastOcrWords = [];
 
           const { billData, fieldConfidences } = DataExtractionModule._mapNewGoodNitsToBillData(structuredData, { words: [] });
+          this.updateProgress(100, 'Extraction completed.');
           UIModule.hideLoading();
-          UIModule.showNewGoodNitsResults(structuredData, billData, fieldConfidences, 0.85, qualityWasPoor);
+          UIModule.showNewGoodNitsResults(structuredData, billData, fieldConfidences, 0.85, qualityWasPoor, { usedOpenCV: this._usedOpenCVPreprocess });
           UIModule.showToast('Region-based extraction completed. Please verify.', 'success');
           return;
         }
@@ -1537,7 +1637,7 @@ const OCRModule = {
       }
     }
 
-    UIModule.showLoading('Performing OCR...');
+    this.updateProgress(60, 'Performing OCR...');
     const worker = await Tesseract.createWorker('eng');
     this.currentWorker = worker;
 
@@ -1569,7 +1669,7 @@ const OCRModule = {
     const { billData, fieldConfidences, structuredData } = extraction;
 
     UIModule.hideLoading();
-    UIModule.showNewGoodNitsResults(structuredData || DataExtractionModule.buildFallbackNgnPayload(billData), billData, fieldConfidences, overallConfidence, qualityWasPoor);
+    UIModule.showNewGoodNitsResults(structuredData || DataExtractionModule.buildFallbackNgnPayload(billData), billData, fieldConfidences, overallConfidence, qualityWasPoor, { usedOpenCV: this._usedOpenCVPreprocess });
     UIModule.showToast('Extraction completed. Please verify the information.', 'success');
   },
 
@@ -1641,7 +1741,7 @@ const OCRModule = {
     UIModule.hideLoading();
     // Always show full NEW GOOD NITS template form
     const payload = mergedData.structuredData || DataExtractionModule.buildFallbackNgnPayload(mergedData.billData);
-    UIModule.showNewGoodNitsResults(payload, mergedData.billData, mergedData.fieldConfidences, mergedData.overallConfidence, qualityWasPoor);
+    UIModule.showNewGoodNitsResults(payload, mergedData.billData, mergedData.fieldConfidences, mergedData.overallConfidence, qualityWasPoor, { usedOpenCV: false });
     UIModule.showToast('Full scan completed. Please verify the information.', 'success');
   },
 

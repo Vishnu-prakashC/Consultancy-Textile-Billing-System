@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title> OCR Data Entry System</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%234f46e5'/><text x='16' y='22' font-size='18' text-anchor='middle' fill='white'>B</text></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -78,6 +79,12 @@
               <button class="btn btn-outline" id="cancelScanBtn" onclick="OCRModule.cancelScan()" style="display: none;">
                 <span class="btn-text">Cancel Scan</span>
               </button>
+              <div class="progress-container" id="ocrProgress" style="display: none;">
+                <div class="progress-bar">
+                  <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <span class="progress-text" id="progressText">Initializing OCR...</span>
+              </div>
             </div>
           </div>
           
@@ -172,6 +179,36 @@
         <div class="card-body template-sections">
           <div class="ocr-confidence" id="ngnOcrConfidence"></div>
 
+          <section class="template-section template-section-company">
+            <h3>🏢 Company</h3>
+            <div class="form-grid form-grid-2">
+              <div class="form-group full-width">
+                <label for="ngnCompanyName">Company Name</label>
+                <input type="text" id="ngnCompanyName" class="form-input" placeholder="Company name">
+              </div>
+              <div class="form-group full-width">
+                <label for="ngnCompanyAddress">Address</label>
+                <input type="text" id="ngnCompanyAddress" class="form-input" placeholder="Address">
+              </div>
+              <div class="form-group">
+                <label for="ngnCompanyGstin">GSTIN</label>
+                <input type="text" id="ngnCompanyGstin" class="form-input" placeholder="GSTIN">
+              </div>
+              <div class="form-group">
+                <label for="ngnCompanyTin">TIN</label>
+                <input type="text" id="ngnCompanyTin" class="form-input" placeholder="TIN">
+              </div>
+              <div class="form-group">
+                <label for="ngnCompanyPan">PAN</label>
+                <input type="text" id="ngnCompanyPan" class="form-input" placeholder="PAN">
+              </div>
+              <div class="form-group">
+                <label for="ngnCompanyPhone">Phone</label>
+                <input type="text" id="ngnCompanyPhone" class="form-input" placeholder="Phone">
+              </div>
+            </div>
+          </section>
+
           <section class="template-section template-section-customer">
             <h3>👤 Customer</h3>
             <div class="form-grid form-grid-2">
@@ -190,6 +227,14 @@
               <div class="form-group">
                 <label for="ngnCustomerState">State</label>
                 <input type="text" id="ngnCustomerState" class="form-input" placeholder="State">
+              </div>
+              <div class="form-group">
+                <label for="ngnCustomerPhone">Phone</label>
+                <input type="text" id="ngnCustomerPhone" class="form-input" placeholder="Phone">
+              </div>
+              <div class="form-group">
+                <label for="ngnCustomerEmail">Email</label>
+                <input type="text" id="ngnCustomerEmail" class="form-input" placeholder="Email">
               </div>
             </div>
           </section>
@@ -212,6 +257,10 @@
               <div class="form-group">
                 <label for="ngnPartyDcNo">Party DC No</label>
                 <input type="text" id="ngnPartyDcNo" class="form-input" placeholder="Party DC No">
+              </div>
+              <div class="form-group">
+                <label for="ngnInvoiceType">Invoice Type</label>
+                <input type="text" id="ngnInvoiceType" class="form-input" placeholder="Invoice Type">
               </div>
             </div>
           </section>
@@ -259,6 +308,10 @@
               <div class="form-group">
                 <label for="ngnSgst">SGST 2.5%</label>
                 <input type="number" id="ngnSgst" class="form-input" step="0.01" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label for="ngnIgst">IGST</label>
+                <input type="number" id="ngnIgst" class="form-input" step="0.01" min="0" placeholder="0">
               </div>
               <div class="form-group">
                 <label for="ngnRoundedOff">Rounded Off</label>
@@ -356,7 +409,8 @@
   </div>
 
   <!-- External Libraries -->
-  <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
+  <!-- OpenCV.js: load without async so script runs before app; WASM may still need a few seconds (we wait on first Extract) -->
+  <script src="https://docs.opencv.org/4.8.0/opencv.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <!-- Application Scripts -->

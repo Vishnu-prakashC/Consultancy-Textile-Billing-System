@@ -1,5 +1,5 @@
 /**
- * BillMetaExtractor.js — Extract Bill No, Date, Job No, Party DC from bill meta region text.
+ * BillMetaExtractor.js — Extract Bill No, Date, Job No, Party DC, Invoice Type from bill meta region text.
  */
 
 export function extractBillMeta(text) {
@@ -7,9 +7,10 @@ export function extractBillMeta(text) {
   let date = null;
   let jobNo = null;
   let partyDc = null;
+  let invoiceType = null;
 
   if (!text || typeof text !== "string") {
-    return { billNo, date, jobNo, partyDc };
+    return { billNo, date, jobNo, partyDc, invoiceType };
   }
 
   const billMatch = text.match(/No\s*[:\-]?\s*(\d{1,6})/);
@@ -27,5 +28,8 @@ export function extractBillMeta(text) {
     if (partyDc === "" || partyDc === "-") partyDc = null;
   }
 
-  return { billNo, date, jobNo, partyDc };
+  const typeMatch = text.match(/(Tax\s*Invoice|Invoice|Bill|Receipt)/i);
+  if (typeMatch) invoiceType = typeMatch[1];
+
+  return { billNo, date, jobNo, partyDc, invoiceType };
 }

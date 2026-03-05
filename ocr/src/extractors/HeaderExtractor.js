@@ -1,16 +1,16 @@
 /**
  * HeaderExtractor.js — Extract company/sender info from header region text.
- * Company name, GSTIN, TIN, PAN, phone numbers. Uses regex patterns.
+ * Company name, GSTIN, TIN, PAN, phone numbers, address. Uses regex patterns.
  */
 
 /**
  * Extract header fields from OCR text of the header region.
  * @param {string} text - Raw OCR text from header region
- * @returns {{ companyName: string|null, gstin: string|null, tin: string|null, pan: string|null, phones: string[] }}
+ * @returns {{ companyName: string|null, gstin: string|null, tin: string|null, pan: string|null, phones: string[], address: string|null }}
  */
 export function extractHeader(text) {
   if (!text || typeof text !== "string") {
-    return { companyName: null, gstin: null, tin: null, pan: null, phones: [] };
+    return { companyName: null, gstin: null, tin: null, pan: null, phones: [], address: null };
   }
 
   const t = text.trim();
@@ -45,11 +45,26 @@ export function extractHeader(text) {
   }
   if (!companyName && lines.length) companyName = lines[0];
 
+  // Address: lines after company name until GSTIN or phones
+  let address = null;
+  if (companyName) {
+    const companyIndex = lines.findIndex(l => l === companyName);
+    const remainingLines = lines.slice(companyIndex + 1);
+    const addressLines = [];
+    for (const line of remainingLines) {
+      if (gstin && line.includes(gstin)) break;
+      if (phones.some(p => line.includes(p))) break;
+      addressLines.push(line);
+    }
+    if (addressLines.length) address = addressLines.join(", ");
+  }
+
   return {
     companyName,
     gstin,
     tin,
     pan,
-    phones
+    phones,
+    address
   };
 }

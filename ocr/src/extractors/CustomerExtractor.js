@@ -1,18 +1,22 @@
 /**
- * CustomerExtractor.js — Extract customer name, address, GST from customer region text.
+ * CustomerExtractor.js — Extract customer name, address, GST, phone, email from customer region text.
  * Find GST pattern; text before GST = customer block. name = line 3 from end, address = last 3 lines joined.
  */
 
 const GST_REGEX = /[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/;
+const PHONE_REGEX = /\b\d{10}\b|\b\d{5}[\s\-]?\d{5}\b/;
+const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
 
 export function extractCustomer(text) {
   let name = "";
   let address = "";
   let gst = "";
   let state = null;
+  let phone = "";
+  let email = "";
 
   if (!text || typeof text !== "string") {
-    return { name, address, gst, state };
+    return { name, address, gst, state, phone, email };
   }
 
   const gstMatch = text.match(GST_REGEX);
@@ -36,5 +40,11 @@ export function extractCustomer(text) {
     state = stateMatch[1] || (stateMatch[0] && /Tamil/i.test(stateMatch[0]) ? "Tamil Nadu" : null);
   }
 
-  return { name, address, gst, state };
+  const phoneMatch = text.match(PHONE_REGEX);
+  if (phoneMatch) phone = phoneMatch[0].replace(/\s/g, "");
+
+  const emailMatch = text.match(EMAIL_REGEX);
+  if (emailMatch) email = emailMatch[0];
+
+  return { name, address, gst, state, phone, email };
 }

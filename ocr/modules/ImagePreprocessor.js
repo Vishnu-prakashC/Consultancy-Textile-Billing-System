@@ -5,13 +5,13 @@
  * cropRegions(blob, width, height) returns region blobs for region-based OCR (NEW GOOD NITS layout).
  */
 
-/** NEW GOOD NITS layout: fractions of page height/width (0–1). Slightly tighter to avoid header (phones) bleeding into bill meta. */
+/** NEW GOOD NITS layout — aligned with template-learning spec (Header 0–18%, Customer 18–35%, Table 35–75%, Totals 75–92%). */
 export const NEW_GOOD_NITS_LAYOUT = {
   header:   { top: 0,    bottom: 0.18, left: 0, right: 1 },
-  customer: { top: 0.19, bottom: 0.37, left: 0, right: 0.52 },
-  billMeta: { top: 0.19, bottom: 0.37, left: 0.50, right: 1 },
-  table:    { top: 0.37, bottom: 0.75, left: 0, right: 1 },
-  totals:   { top: 0.75, bottom: 0.95, left: 0, right: 1 }
+  customer: { top: 0.18, bottom: 0.35, left: 0, right: 0.55 },
+  billMeta: { top: 0.18, bottom: 0.35, left: 0.52, right: 1 },
+  table:    { top: 0.35, bottom: 0.75, left: 0, right: 1 },
+  totals:   { top: 0.75, bottom: 0.92, left: 0, right: 1 }
 };
 
 /**
@@ -116,6 +116,42 @@ function applyThreshold(data, threshold = 150) {
 }
 
 /**
+ * Compute Otsu's threshold from grayscale histogram (R channel after grayscale).
+ * Works well for uneven lighting; use instead of fixed threshold for camera photos.
+ * @param {Uint8ClampedArray} data - RGBA image data (grayscale: R=G=B)
+ * @returns {number} threshold 0..255
+ */
+function otsuThreshold(data) {
+  const hist = new Int32Array(256);
+  for (let i = 0; i < data.length; i += 4) {
+    hist[data[i]]++;
+  }
+  let total = data.length / 4;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0;
+  let wB = 0;
+  let wF = 0;
+  let maxV = 0;
+  let threshold = 0;
+  for (let i = 0; i < 256; i++) {
+    wB += hist[i];
+    if (wB === 0) continue;
+    wF = total - wB;
+    if (wF === 0) break;
+    sumB += i * hist[i];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > maxV) {
+      maxV = v;
+      threshold = i;
+    }
+  }
+  return Math.max(1, Math.min(254, threshold));
+}
+
+/**
  * Preprocess image for OCR: upscale 2x, grayscale, contrast, sharpen, threshold.
  * @param {File} file - Image file (JPEG/PNG)
  * @param {Object} options - Optional: { threshold, contrastFactor, skipBinarize }
@@ -123,7 +159,7 @@ function applyThreshold(data, threshold = 150) {
  */
 export async function preprocessImage(file, options = {}) {
   const {
-    threshold = 150,
+    threshold = null,
     contrastFactor = 1.3,
     skipBinarize = false
   } = options;
@@ -145,7 +181,8 @@ export async function preprocessImage(file, options = {}) {
   applyContrast(data, contrastFactor);
   applySharpen(imageData);
   if (!skipBinarize) {
-    applyThreshold(data, threshold);
+    const th = threshold != null && threshold >= 0 ? threshold : otsuThreshold(data);
+    applyThreshold(data, th);
   }
   ctx.putImageData(imageData, 0, 0);
 
@@ -166,8 +203,13 @@ export async function preprocessImage(file, options = {}) {
   };
 }
 
+/** Minimum region size for Tesseract (avoids "Image too small to scale" / "Line cannot be recognized"). */
+const MIN_REGION_WIDTH = 40;
+const MIN_REGION_HEIGHT = 24;
+
 /**
  * Crop image into regions by layout (fractions 0–1). Used for region-based OCR.
+ * Regions smaller than MIN_REGION_* are scaled up so Tesseract receives a viable size.
  * @param {Blob} blob - Preprocessed image blob (e.g. from preprocessImage)
  * @param {number} width - Full image width (e.g. originalWidth * 2 if preprocess upscaled 2x)
  * @param {number} height - Full image height
@@ -186,15 +228,26 @@ export async function cropRegions(blob, width, height, layout = NEW_GOOD_NITS_LA
   for (const [key, region] of Object.entries(layout)) {
     const sx = Math.round(region.left * width);
     const sy = Math.round(region.top * height);
-    const sw = Math.round((region.right - region.left) * width);
-    const sh = Math.round((region.bottom - region.top) * height);
+    let sw = Math.round((region.right - region.left) * width);
+    let sh = Math.round((region.bottom - region.top) * height);
     if (sw <= 0 || sh <= 0) continue;
 
+    let outW = sw;
+    let outH = sh;
+    if (sw < MIN_REGION_WIDTH || sh < MIN_REGION_HEIGHT) {
+      const scale = Math.max(
+        MIN_REGION_WIDTH / Math.max(1, sw),
+        MIN_REGION_HEIGHT / Math.max(1, sh)
+      );
+      outW = Math.max(MIN_REGION_WIDTH, Math.round(sw * scale));
+      outH = Math.max(MIN_REGION_HEIGHT, Math.round(sh * scale));
+    }
+
     const crop = document.createElement("canvas");
-    crop.width = sw;
-    crop.height = sh;
+    crop.width = outW;
+    crop.height = outH;
     const cctx = crop.getContext("2d");
-    cctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    cctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, outW, outH);
 
     out[key] = await new Promise((resolve, reject) => {
       crop.toBlob(

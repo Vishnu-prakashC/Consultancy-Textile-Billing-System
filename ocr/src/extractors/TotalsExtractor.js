@@ -1,17 +1,18 @@
 /**
- * TotalsExtractor.js — Extract subtotal, CGST, SGST, netTotal from totals region text.
- * Numbers from regex; netTotal = last decimal; CGST/SGST from label regex.
+ * TotalsExtractor.js — Extract subtotal, CGST, SGST, IGST, netTotal from totals region text.
+ * Numbers from regex; netTotal = last decimal; CGST/SGST/IGST from label regex.
  */
 
 export function extractTotals(text) {
   let subtotal = null;
   let cgst = null;
   let sgst = null;
+  let igst = null;
   let netTotal = null;
   let roundedOff = null;
 
   if (!text || typeof text !== "string") {
-    return { subtotal, cgst, sgst, roundedOff, netTotal };
+    return { subtotal, cgst, sgst, igst, roundedOff, netTotal };
   }
 
   const numbers = text.match(/[\d,]+\.\d+/g);
@@ -27,8 +28,11 @@ export function extractTotals(text) {
   const sgstMatch = text.match(/SGST.*?([\d,]+\.\d+)/i);
   if (sgstMatch) sgst = parseFloat(sgstMatch[1].replace(/,/g, ""));
 
+  const igstMatch = text.match(/IGST.*?([\d,]+\.\d+)/i);
+  if (igstMatch) igst = parseFloat(igstMatch[1].replace(/,/g, ""));
+
   const roundedMatch = text.match(/Rounded\s*Off|Round\s*Off.*?([\d,.\-]+)/i);
   if (roundedMatch && roundedMatch[1]) roundedOff = parseFloat(roundedMatch[1].replace(/,/g, ""));
 
-  return { subtotal, cgst, sgst, roundedOff, netTotal };
+  return { subtotal, cgst, sgst, igst, roundedOff, netTotal };
 }

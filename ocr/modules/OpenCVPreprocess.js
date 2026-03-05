@@ -156,3 +156,35 @@ export function runOpenCVPreprocess(canvas) {
 export function isAvailable() {
   return typeof cv !== "undefined";
 }
+
+  /**
+   * Wait for OpenCV.js to be loaded (e.g. script is async or WASM still loading). Polls until cv is defined or timeout.
+   * Also sets window.cv from Module.cv when OpenCV uses Emscripten Module.
+   * @param {number} timeoutMs - Max wait in ms (default 20000)
+   * @returns {Promise<boolean>} true if cv is available, false on timeout
+   */
+export function waitForOpenCV(timeoutMs = 20000) {
+  if (typeof cv !== "undefined") return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const t = setInterval(() => {
+      if (typeof cv !== "undefined") {
+        clearInterval(t);
+        resolve(true);
+        return;
+      }
+      if (typeof Module !== "undefined" && Module.cv) {
+        try {
+          window.cv = Module.cv;
+          clearInterval(t);
+          resolve(true);
+          return;
+        } catch (e) {}
+      }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(t);
+        resolve(false);
+      }
+    }, 250);
+  });
+}

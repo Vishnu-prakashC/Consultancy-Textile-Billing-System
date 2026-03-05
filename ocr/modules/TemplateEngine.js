@@ -6,6 +6,7 @@
 import { parseNewGoodNits, extractCustomer, extractBillMeta, extractTotals, normalizeOcrText } from "./NewGoodNitsParser.js";
 import { parseTable } from "./TableParser.js";
 import { extractSpatial } from "./SpatialExtractor.js";
+import { extractHeader } from "../src/extractors/HeaderExtractor.js";
 
 /**
  * Detect which company template the OCR text belongs to.
@@ -15,9 +16,9 @@ import { extractSpatial } from "./SpatialExtractor.js";
  */
 export function detectTemplate(text) {
   const upper = (text || "").toUpperCase();
-  if (upper.includes("NEW GOOD NITS")) return "NEW_GOOD_NITS";
-  if (upper.includes("KNITTING INVOICE") && (upper.includes("GOOD NITS") || upper.includes("NEW GOOD"))) return "NEW_GOOD_NITS";
-  if (upper.includes("GOOD NITS") && upper.includes("TIRUPUR")) return "NEW_GOOD_NITS";
+  if (upper.includes("NEW") && upper.includes("GOOD") && upper.includes("NITS")) return "NEW_GOOD_NITS";
+  if (upper.includes("KNITTING") && upper.includes("INVOICE") && (upper.includes("GOOD") || upper.includes("NEW"))) return "NEW_GOOD_NITS";
+  if (upper.includes("GOOD") && upper.includes("NITS") && upper.includes("TIRUPUR")) return "NEW_GOOD_NITS";
   return null;
 }
 
@@ -44,17 +45,20 @@ export function extractData(text) {
  * @returns {{ customer: object|null, billMeta: object, table: Array, totals: object }}
  */
 export function extractDataFromRegions(regionTexts) {
+  const headerText = normalizeOcrText(regionTexts.header || "");
   const customerText = normalizeOcrText(regionTexts.customer || "");
   const billMetaText = normalizeOcrText(regionTexts.billMeta || "");
   const tableText = normalizeOcrText(regionTexts.table || "");
   const totalsText = normalizeOcrText(regionTexts.totals || "");
 
+  const header = extractHeader(headerText);
   const customer = extractCustomer(customerText);
   const billMeta = extractBillMeta(billMetaText);
   const table = parseTable(tableText);
   const totals = extractTotals(totalsText);
 
   return {
+    header,
     customer: customer || null,
     billMeta,
     table,
