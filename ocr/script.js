@@ -103,7 +103,7 @@ const ImageQualityModule = {
           overall: 'good'
         };
 
-        // Determine overall quality
+        // Determine overall quality — only mark poor when 3+ issues (avoids flagging good bills)
         const issues = [];
         if (!quality.resolution.adequate) issues.push('low resolution');
         if (quality.blur.isBlurry) issues.push('blurry');
@@ -111,7 +111,7 @@ const ImageQualityModule = {
         if (!quality.contrast.adequate) issues.push('low contrast');
         if (!quality.textSize.adequate) issues.push('text too small');
 
-        if (issues.length > 0) {
+        if (issues.length >= 3) {
           quality.overall = 'poor';
           quality.issues = issues;
         }
@@ -188,7 +188,7 @@ const ImageQualityModule = {
     }
 
     variance = variance / count;
-    const threshold = 100; // Lower threshold = more blur detection
+    const threshold = 50; // Relaxed: avoid flagging slightly soft bill images as blurry
 
     return {
       variance,
@@ -215,8 +215,8 @@ const ImageQualityModule = {
     }
 
     const avgBrightness = totalBrightness / count;
-    const minBrightness = 50;
-    const maxBrightness = 200;
+    const minBrightness = 40;
+    const maxBrightness = 235; // Allow well-lit photos; only flag very washed-out
 
     let issue = null;
     if (avgBrightness < minBrightness) {
@@ -259,19 +259,17 @@ const ImageQualityModule = {
   },
 
   /**
-   * Estimate if text size is readable
+   * Estimate if text size is readable (very relaxed — bills often have small text)
    */
   estimateTextSize(width, height) {
-    // Assume document is A4-like (8.27 x 11.69 inches at 300 DPI)
-    // Minimum readable text is ~10pt at 300 DPI = ~13 pixels
     const estimatedDPI = Math.min(width / 8.27, height / 11.69);
-    const minTextSize = 10; // 10pt minimum
+    const minTextSize = 10;
     const minPixels = (minTextSize / 72) * estimatedDPI;
 
     return {
       estimatedDPI,
       minTextSizePixels: minPixels,
-      adequate: estimatedDPI >= 150 && width >= 1000 // At least 150 DPI equivalent
+      adequate: width >= 400 && estimatedDPI >= 50
     };
   }
 };
@@ -780,10 +778,20 @@ const UIModule = {
     const showRecoveryBanner = qualityWasPoor || (overallConfidence > 0 && overallConfidence < 0.7);
     let recoveryBannerHtml = '';
     if (showRecoveryBanner) {
+      const isLowQuality = qualityWasPoor;
+      const isLowConfidence = overallConfidence > 0 && overallConfidence < 0.7 && !qualityWasPoor;
+      let bannerTitle = '';
+      let bannerText = 'Please verify highlighted fields before saving.';
+      if (isLowQuality) {
+        bannerTitle = '⚠️ Low image quality detected';
+        bannerText = 'Extraction completed using recovery mode. ' + bannerText;
+      } else if (isLowConfidence) {
+        bannerTitle = '⚠️ Some fields have low OCR confidence';
+      }
       recoveryBannerHtml = `
         <div class="recovery-mode-banner" role="alert">
-          <strong>⚠️ Low image quality detected</strong>
-          <p>Extraction completed using recovery mode. Please verify highlighted fields.</p>
+          <strong>${bannerTitle}</strong>
+          <p>${bannerText}</p>
         </div>
       `;
     }
@@ -1408,9 +1416,7 @@ const OCRModule = {
 
   /**
    * Perform quick scan (single OCR pass).
-   * Upscales image 2x before OCR; uses PSM 6 and filters low-confidence words.
-   * @param {File} file
-   * @param {boolean} [qualityWasPoor] - Advisory: show recovery-mode banner if true
+   * When NEW GOOD NITS template is detected via header region, uses region-based OCR (crop → OCR per region → extract) for better accuracy. Otherwise full-page OCR.
    */
   async performQuickScan(file, qualityWasPoor = false) {
     UIModule.showLoading('Preparing image & performing OCR...');
@@ -1418,22 +1424,104 @@ const OCRModule = {
     let imageSource = file;
     this.lastOcrScale = 1;
     try {
-      const { blob, originalWidth, originalHeight } = await this.upscaleImageForOcr(file);
-      imageSource = blob;
-      this.lastOcrScale = 2;
-      this._lastOriginalSize = { w: originalWidth, h: originalHeight };
+      if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
+        const { blob, originalWidth, originalHeight } = await window.ImagePreprocessor.preprocessImage(file);
+        imageSource = blob;
+        this.lastOcrScale = 2;
+        this._lastOriginalSize = { w: originalWidth, h: originalHeight };
+      } else {
+        const { blob, originalWidth, originalHeight } = await this.upscaleImageForOcr(file);
+        imageSource = blob;
+        this.lastOcrScale = 2;
+        this._lastOriginalSize = { w: originalWidth, h: originalHeight };
+      }
     } catch (e) {
-      console.warn('Upscale failed, using original image:', e.message);
+      console.warn('Preprocess/upscale failed, using original image:', e.message);
     }
 
+    const useRegionOcr = this._lastOriginalSize &&
+      typeof window !== 'undefined' &&
+      window.ImagePreprocessor?.cropRegions &&
+      window.TemplateEngine?.extractDataFromRegions &&
+      window.TemplateEngine?.detectTemplate;
+
+    if (useRegionOcr) {
+      try {
+        const w = this._lastOriginalSize.w * this.lastOcrScale;
+        const h = this._lastOriginalSize.h * this.lastOcrScale;
+        UIModule.showLoading('Cropping regions & scanning...');
+        const regions = await window.ImagePreprocessor.cropRegions(imageSource, w, h);
+        if (this.cancelRequested) throw new Error('Scan cancelled');
+
+        const worker = await Tesseract.createWorker('eng');
+        this.currentWorker = worker;
+        await worker.setParameters({
+          tessedit_pageseg_mode: 6,
+          preserve_interword_spaces: '1',
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
+        });
+
+        const recognizeRegion = async (blob) => {
+          if (this.cancelRequested) return '';
+          const { data } = await worker.recognize(blob);
+          return data.text || '';
+        };
+
+        UIModule.showLoading('Detecting template (header)...');
+        const headerText = await recognizeRegion(regions.header);
+        const template = window.TemplateEngine.detectTemplate(headerText);
+
+        if (template === 'NEW_GOOD_NITS') {
+          UIModule.showLoading('Scanning customer & bill meta...');
+          const [customerText, billMetaText] = await Promise.all([
+            recognizeRegion(regions.customer),
+            recognizeRegion(regions.billMeta)
+          ]);
+          if (this.cancelRequested) { await worker.terminate(); throw new Error('Scan cancelled'); }
+          UIModule.showLoading('Scanning table...');
+          const tableText = await recognizeRegion(regions.table);
+          if (this.cancelRequested) { await worker.terminate(); throw new Error('Scan cancelled'); }
+          UIModule.showLoading('Scanning totals...');
+          const totalsText = await recognizeRegion(regions.totals);
+
+          await worker.terminate();
+          this.currentWorker = null;
+
+          const structuredData = window.TemplateEngine.extractDataFromRegions({
+            customer: customerText,
+            billMeta: billMetaText,
+            table: tableText,
+            totals: totalsText
+          });
+          this.lastOcrWords = [];
+
+          const { billData, fieldConfidences } = DataExtractionModule._mapNewGoodNitsToBillData(structuredData, { words: [] });
+          UIModule.hideLoading();
+          UIModule.showNewGoodNitsResults(structuredData, billData, fieldConfidences, 0.85, qualityWasPoor);
+          UIModule.showToast('Region-based extraction completed. Please verify.', 'success');
+          return;
+        }
+
+        await worker.terminate();
+        this.currentWorker = null;
+      } catch (err) {
+        if (err.message === 'Scan cancelled') throw err;
+        if (this.currentWorker) {
+          await this.currentWorker.terminate();
+          this.currentWorker = null;
+        }
+        console.warn('Region-based OCR failed, falling back to full-page:', err.message);
+      }
+    }
+
+    UIModule.showLoading('Performing OCR...');
     const worker = await Tesseract.createWorker('eng');
     this.currentWorker = worker;
 
     await worker.setParameters({
       tessedit_pageseg_mode: 6,
       preserve_interword_spaces: '1',
-      tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.- ',
-      tessedit_char_blacklist: '`~!@#$%^&*_=+[]{}<>|\\'
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
     });
 
     if (this.cancelRequested) {
@@ -1445,8 +1533,8 @@ const OCRModule = {
     await worker.terminate();
     this.currentWorker = null;
 
-    const minConfidence = 40;
-    const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) >= minConfidence);
+    const minConfidence = 45;
+    const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) > minConfidence);
     this.lastOcrWords = wordsFiltered;
 
     const extractedText = data.text;
@@ -1464,7 +1552,7 @@ const OCRModule = {
 
   /**
    * Perform full scan (multiple OCR passes with result merging).
-   * Upscales image 2x per pass; PSM 6; filters words by confidence >= 40.
+   * Uses ImagePreprocessor when available, else 2x upscale; PSM 6; filters words by confidence >= 40.
    */
   async performFullScan(file, qualityWasPoor = false) {
     UIModule.showLoading('Preparing image & performing Full Scan (Pass 1/3)...');
@@ -1472,17 +1560,23 @@ const OCRModule = {
     let imageSource = file;
     this.lastOcrScale = 1;
     try {
-      const { blob } = await this.upscaleImageForOcr(file);
-      imageSource = blob;
-      this.lastOcrScale = 2;
+      if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
+        const { blob } = await window.ImagePreprocessor.preprocessImage(file);
+        imageSource = blob;
+        this.lastOcrScale = 2;
+      } else {
+        const { blob } = await this.upscaleImageForOcr(file);
+        imageSource = blob;
+        this.lastOcrScale = 2;
+      }
     } catch (e) {
-      console.warn('Upscale failed, using original image:', e.message);
+      console.warn('Preprocess/upscale failed, using original image:', e.message);
     }
 
     const passes = 3;
     const results = [];
     const allTexts = [];
-    const minConfidence = 40;
+    const minConfidence = 45;
 
     for (let i = 0; i < passes; i++) {
       if (this.cancelRequested) throw new Error('Scan cancelled');
@@ -1495,8 +1589,7 @@ const OCRModule = {
       await worker.setParameters({
         tessedit_pageseg_mode: 6,
         preserve_interword_spaces: '1',
-        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.- ',
-        tessedit_char_blacklist: '`~!@#$%^&*_=+[]{}<>|\\'
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./:-% '
       });
 
       if (this.cancelRequested) {
@@ -1508,7 +1601,7 @@ const OCRModule = {
       await worker.terminate();
       this.currentWorker = null;
 
-      const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) >= minConfidence);
+      const wordsFiltered = (data.words || []).filter((w) => (w.confidence ?? 100) > minConfidence);
       if (i === 0) this.lastOcrWords = wordsFiltered;
 
       results.push({
@@ -1843,9 +1936,11 @@ const DataExtractionModule = {
       const sub = totals.subtotal ? toNum(totals.subtotal) : table.reduce((s, r) => s + (r.amount || 0), 0);
       const vTable = window.InvoiceValidation.validateTableSum(table, totals.subtotal);
       const vGst = window.InvoiceValidation.validateGST(totals.subtotal, totals.cgst, totals.sgst);
-      const vNet = window.InvoiceValidation.validateNetTotal(totals.subtotal, totals.cgst, totals.sgst, totals.netTotal);
+      const vNet = window.InvoiceValidation.validateNetTotal(totals.subtotal, totals.cgst, totals.sgst, totals.netTotal, totals.roundedOff);
       if (!vTable || !vGst || !vNet) {
-        console.warn('Invoice validation:', { tableSum: vTable, gst: vGst, netTotal: vNet });
+        if (typeof window !== 'undefined' && window.__DEBUG_INVOICE__) {
+          console.warn('Invoice validation:', { tableSum: vTable, gst: vGst, netTotal: vNet });
+        }
       }
     }
 
@@ -1975,7 +2070,7 @@ const StorageModule = {
   db: null,
   currentImageFile: null,
   currentImageData: null,
-  currentScanMode: 'full', // 'quick' or 'full' (default: 'full' for better accuracy)
+  currentScanMode: 'quick', // 'quick' or 'full'; default Quick for speed
   cameraStream: null,
   qualityWarningAcknowledged: false, // Track if user acknowledged quality warning
 
@@ -2103,13 +2198,16 @@ const StorageModule = {
    */
   async searchBills(query) {
     const allBills = await this.getAllBills();
-    const lowerQuery = query.toLowerCase();
+    const lowerQuery = (query || '').toLowerCase();
 
     return allBills.filter(bill => {
+      const billNo = (bill.billNo != null) ? String(bill.billNo).toLowerCase() : '';
+      const customer = (bill.customer != null) ? String(bill.customer).toLowerCase() : '';
+      const dateStr = bill.date ? new Date(bill.date).toLocaleDateString() : '';
       return (
-        bill.billNo.toLowerCase().includes(lowerQuery) ||
-        bill.customer.toLowerCase().includes(lowerQuery) ||
-        new Date(bill.date).toLocaleDateString().includes(lowerQuery)
+        billNo.includes(lowerQuery) ||
+        customer.includes(lowerQuery) ||
+        dateStr.includes(lowerQuery)
       );
     });
   },
@@ -2365,28 +2463,34 @@ const DataViewModule = {
    */
   renderRecords() {
     const recordsList = document.getElementById('recordsList');
+    if (!recordsList) return;
+
     const emptyState = document.getElementById('emptyState');
 
     if (this.filteredRecords.length === 0) {
       recordsList.innerHTML = '';
-      recordsList.appendChild(emptyState);
-      emptyState.style.display = 'block';
+      if (emptyState) {
+        recordsList.appendChild(emptyState);
+        emptyState.style.display = 'block';
+      } else {
+        recordsList.innerHTML = '<div class="empty-state" id="emptyState"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg><p>No records found. Start by scanning a bill!</p></div>';
+      }
       return;
     }
 
-    emptyState.style.display = 'none';
-    
+    if (emptyState) emptyState.style.display = 'none';
+
     // Sort by date (newest first)
-    const sorted = [...this.filteredRecords].sort((a, b) => 
-      new Date(b.createdAt) - new Date(a.createdAt)
+    const sorted = [...this.filteredRecords].sort((a, b) =>
+      new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
     );
 
     recordsList.innerHTML = sorted.map(record => this.createRecordCard(record)).join('');
-    
+
     // Attach click handlers
-    document.querySelectorAll('.record-card').forEach(card => {
+    recordsList.querySelectorAll('.record-card').forEach(card => {
       card.addEventListener('click', () => {
-        const id = parseInt(card.dataset.id);
+        const id = parseInt(card.dataset.id, 10);
         const record = this.allRecords.find(r => r.id === id);
         if (record) {
           UIModule.showModal(record);
@@ -2399,24 +2503,29 @@ const DataViewModule = {
    * Create HTML card for a record
    */
   createRecordCard(record) {
-    const imageThumb = record.imageData 
+    const imageThumb = record.imageData
       ? `<div class="record-thumb"><img src="${record.imageData}" alt="Bill" /></div>`
-      : '<div class="record-thumb no-image"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg></div>';
+      : '<div class="record-thumb no-image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg></div>';
+
+    const billNo = (record.billNo != null && record.billNo !== '') ? String(record.billNo) : '—';
+    const customer = (record.customer != null && record.customer !== '') ? String(record.customer).replace(/</g, '&lt;').replace(/>/g, '&gt;') : '—';
+    const dateStr = record.date ? new Date(record.date).toLocaleDateString() : '—';
+    const totalVal = (record.total != null && !isNaN(record.total)) ? parseFloat(record.total) : 0;
 
     return `
       <div class="record-card" data-id="${record.id}">
         ${imageThumb}
         <div class="record-info">
           <div class="record-header">
-            <h3>${record.billNo}</h3>
+            <h3>${billNo}</h3>
             <span class="sync-badge ${record.synced ? 'synced' : 'not-synced'}">
               ${record.synced ? '✓' : '⚠'}
             </span>
           </div>
-          <p class="record-customer">${record.customer}</p>
+          <p class="record-customer">${customer}</p>
           <div class="record-meta">
-            <span class="record-date">${new Date(record.date).toLocaleDateString()}</span>
-            <span class="record-amount">₹${parseFloat(record.total).toFixed(2)}</span>
+            <span class="record-date">${dateStr}</span>
+            <span class="record-amount">₹${totalVal.toFixed(2)}</span>
           </div>
         </div>
       </div>
@@ -2427,24 +2536,21 @@ const DataViewModule = {
    * Filter records by search query
    */
   async filterRecords(query) {
-    if (!query.trim()) {
+    if (!query || !query.trim()) {
       this.filteredRecords = [...this.allRecords];
     } else {
       this.filteredRecords = await StorageModule.searchBills(query);
     }
-    
-    // Apply sync filter if active
-    const syncFilter = document.getElementById('syncFilter').value;
-    if (syncFilter !== 'all') {
+
+    const syncFilterEl = document.getElementById('syncFilter');
+    if (syncFilterEl && syncFilterEl.value !== 'all') {
+      const syncFilter = syncFilterEl.value;
       this.filteredRecords = this.filteredRecords.filter(record => {
-        if (syncFilter === 'synced') {
-          return record.synced === true;
-        } else {
-          return record.synced === false;
-        }
+        if (syncFilter === 'synced') return record.synced === true;
+        return record.synced === false;
       });
     }
-    
+
     this.renderRecords();
   },
 
@@ -2457,20 +2563,19 @@ const DataViewModule = {
     } else {
       this.filteredRecords = await StorageModule.filterBySyncStatus(syncStatus);
     }
-    
-    // Apply search query if active
-    const searchQuery = document.getElementById('searchInput').value;
-    if (searchQuery.trim()) {
+
+    const searchInput = document.getElementById('searchInput');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
       this.filteredRecords = this.filteredRecords.filter(record => {
-        const lowerQuery = searchQuery.toLowerCase();
-        return (
-          record.billNo.toLowerCase().includes(lowerQuery) ||
-          record.customer.toLowerCase().includes(lowerQuery) ||
-          new Date(record.date).toLocaleDateString().includes(lowerQuery)
-        );
+        const billNo = (record.billNo != null) ? String(record.billNo).toLowerCase() : '';
+        const customer = (record.customer != null) ? String(record.customer).toLowerCase() : '';
+        const dateStr = record.date ? new Date(record.date).toLocaleDateString() : '';
+        return billNo.includes(lowerQuery) || customer.includes(lowerQuery) || dateStr.includes(lowerQuery);
       });
     }
-    
+
     this.renderRecords();
   }
 };

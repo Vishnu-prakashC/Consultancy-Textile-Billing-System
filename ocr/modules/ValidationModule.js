@@ -44,18 +44,20 @@ export function validateGST(subtotalStr, cgstStr, sgstStr) {
 }
 
 /**
- * Validate net total = subtotal + CGST + SGST (within ₹1).
+ * Validate net total = subtotal + CGST + SGST [+ roundedOff] (within ₹1).
  * @param {string|null} subtotalStr
  * @param {string|null} cgstStr
  * @param {string|null} sgstStr
  * @param {string|null} netStr
+ * @param {string|null} [roundedOffStr] - If provided, expected = subtotal + cgst + sgst + roundedOff
  * @returns {boolean}
  */
-export function validateNetTotal(subtotalStr, cgstStr, sgstStr, netStr) {
+export function validateNetTotal(subtotalStr, cgstStr, sgstStr, netStr, roundedOffStr = null) {
   const subtotal = toNumber(subtotalStr);
   const cgst = toNumber(cgstStr);
   const sgst = toNumber(sgstStr);
   const net = toNumber(netStr);
-  const expected = subtotal + cgst + sgst;
+  const roundedOff = roundedOffStr != null ? toNumber(roundedOffStr) : 0;
+  const expected = subtotal + cgst + sgst + roundedOff;
   return Math.abs(expected - net) < 1;
 }

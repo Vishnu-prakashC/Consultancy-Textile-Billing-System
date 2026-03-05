@@ -1,9 +1,10 @@
 /**
  * TemplateEngine.js — Detects invoice template and routes to the correct parser.
- * Supports position-aware extraction when word bounding boxes are available.
+ * Supports position-aware extraction and region-based extraction (OCR per region).
  */
 
-import { parseNewGoodNits } from "./NewGoodNitsParser.js";
+import { parseNewGoodNits, extractCustomer, extractBillMeta, extractTotals, normalizeOcrText } from "./NewGoodNitsParser.js";
+import { parseTable } from "./TableParser.js";
 import { extractSpatial } from "./SpatialExtractor.js";
 
 /**
@@ -34,6 +35,31 @@ export function extractData(text) {
   }
 
   throw new Error("Unsupported invoice format");
+}
+
+/**
+ * Extract structured data from region OCR texts (region-based OCR path).
+ * Each region was OCR'd separately, so text order is stable per region.
+ * @param {{ header?: string, customer: string, billMeta: string, table: string, totals: string }} regionTexts
+ * @returns {{ customer: object|null, billMeta: object, table: Array, totals: object }}
+ */
+export function extractDataFromRegions(regionTexts) {
+  const customerText = normalizeOcrText(regionTexts.customer || "");
+  const billMetaText = normalizeOcrText(regionTexts.billMeta || "");
+  const tableText = normalizeOcrText(regionTexts.table || "");
+  const totalsText = normalizeOcrText(regionTexts.totals || "");
+
+  const customer = extractCustomer(customerText);
+  const billMeta = extractBillMeta(billMetaText);
+  const table = parseTable(tableText);
+  const totals = extractTotals(totalsText);
+
+  return {
+    customer: customer || null,
+    billMeta,
+    table,
+    totals
+  };
 }
 
 /**
