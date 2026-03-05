@@ -1,46 +1,40 @@
 /**
- * CustomerExtractor.js — Extract customer block from customer region text.
- * Find GST number first; words above = customer block. Extract name, address, gstNumber, state.
+ * CustomerExtractor.js — Extract customer name, address, GST from customer region text.
+ * Find GST pattern; text before GST = customer block. name = line 3 from end, address = last 3 lines joined.
  */
 
-const GST_PATTERN = /[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/i;
+const GST_REGEX = /[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/;
 
-/**
- * Extract customer fields from OCR text of the customer region.
- * Logic: find GST pattern; text above GST = customer block. First uppercase-heavy line = name, rest = address.
- * @param {string} text - Raw OCR text from customer region
- * @returns {{ customerName: string|null, address: string, gstNumber: string|null, state: string|null }}
- */
 export function extractCustomer(text) {
+  let name = "";
+  let address = "";
+  let gst = "";
+  let state = null;
+
   if (!text || typeof text !== "string") {
-    return { customerName: null, address: "", gstNumber: null, state: null };
+    return { name, address, gst, state };
   }
 
-  const t = text.trim();
-  const gstMatch = t.match(GST_PATTERN);
-  const gstNumber = gstMatch ? gstMatch[0].replace(/\s/g, "") : null;
+  const gstMatch = text.match(GST_REGEX);
+  if (gstMatch) {
+    gst = gstMatch[0];
 
-  const beforeGst = gstMatch ? t.slice(0, gstMatch.index) : t;
-  const lines = beforeGst.split(/\n/).map((l) => l.trim()).filter(Boolean).slice(-6);
+    const before = text.split(gstMatch[0])[0] || "";
+    const lines = before.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  const nameLine = lines.find(
-    (l) => (l.match(/[A-Z]/g) || []).length >= 2 && l.length <= 80 && !/^\d+$/.test(l)
-  );
-  const customerName = nameLine || lines[0] || null;
-  const rest = nameLine ? lines.filter((l) => l !== nameLine) : lines.slice(1);
-  const address = rest.join(", ").trim() || "";
+    if (lines.length >= 3) {
+      name = lines[lines.length - 3] || "";
+      address = lines.slice(lines.length - 3).join(" ").trim(); // last 3 lines as address block
+    } else if (lines.length >= 1) {
+      name = lines[0] || "";
+      address = lines.slice(1).join(" ").trim();
+    }
+  }
 
   const stateMatch = text.match(/Tamil\s*Nadu\s*\((\d+)\)|\((\d+)\)/i) || text.match(/Tamil\s*Nadu/i);
-  let state = null;
   if (stateMatch) {
-    if (stateMatch[1]) state = stateMatch[1]; // (33) style
-    else if (stateMatch[0] && /Tamil/i.test(stateMatch[0])) state = "Tamil Nadu";
+    state = stateMatch[1] || (stateMatch[0] && /Tamil/i.test(stateMatch[0]) ? "Tamil Nadu" : null);
   }
 
-  return {
-    customerName,
-    address,
-    gstNumber,
-    state: state || null
-  };
+  return { name, address, gst, state };
 }

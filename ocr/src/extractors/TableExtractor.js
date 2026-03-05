@@ -1,36 +1,57 @@
 /**
- * TableExtractor.js — Extract table rows from table region text or words.
- * Rows detected by Y clustering; last 3 numeric tokens = weight, rate, amount. Uses NumericRepair.
+ * TableExtractor.js — Table always ends with weight, rate, amount; parse backwards.
+ * extractTableFromText: each line with ≥3 numbers → last 3 = amount, rate, weight.
+ * extractTableFromWords: Y-cluster rows, sort by X, same rule (advanced).
  */
 
 import { parseRepairedNumber } from "../parsers/NumericRepair.js";
-import { isFuzzyTotal } from "../parsers/TextCleaner.js";
-
-const ROW_Y_TOLERANCE = 15;
 
 /**
- * Normalize word for bbox (supports both bbox and flat left/top/right/bottom).
+ * Parse table from plain text (line-based). Last 3 numeric tokens per line = amount, rate, weight.
+ * @param {string} text - OCR text from table region
+ * @returns {Array<{ weight: number, rate: number, amount: number }>}
  */
-function normWord(w) {
-  const b = w.bbox || w;
-  return {
-    text: (w.text || "").trim(),
-    midY: ((b.y0 ?? b.top ?? 0) + (b.y1 ?? b.bottom ?? 0)) / 2,
-    midX: ((b.x0 ?? b.left ?? 0) + (b.x1 ?? b.right ?? 0)) / 2
-  };
+export function extractTableFromText(text) {
+  const lines = (text || "").split("\n");
+  const rows = [];
+
+  for (const line of lines) {
+    const nums = line.match(/[\d]+\.[\d]+|[\d]+/g);
+    if (nums && nums.length >= 3) {
+      const amount = Number(nums[nums.length - 1]);
+      const rate = Number(nums[nums.length - 2]);
+      const weight = Number(nums[nums.length - 3]);
+      if (Number.isFinite(amount) && Number.isFinite(rate) && Number.isFinite(weight)) {
+        rows.push({ weight, rate, amount });
+      }
+    }
+  }
+
+  return rows;
 }
 
 /**
- * Extract table rows from word list (with bboxes). Cluster by Y, sort by X, last 3 numerics = weight, rate, amount.
- * @param {Array<{ text: string, bbox?: object }>} words
- * @returns {Array<{ slNo, dc, date, gg, fabric, counts, mill, dia, weight, rate, amount }>}
+ * Advanced: extract from word list with bboxes. Cluster by Y, sort by X, last 3 numerics = amount, rate, weight.
  */
 export function extractTableFromWords(words) {
   if (!words || !words.length) return [];
 
-  const normalized = words.map(normWord);
-  const totalY = normalized.find((w) => isFuzzyTotal(w.text))?.midY ?? 1e9;
-  const below = normalized.filter((w) => w.midY < totalY - 10).sort((a, b) => a.midY - b.midY || a.midX - b.midX);
+  const ROW_Y_TOLERANCE = 15;
+  const norm = (w) => ({
+    text: (w.text || "").trim(),
+    midY: (w.bbox && ((w.bbox.y0 ?? w.bbox.top) + (w.bbox.y1 ?? w.bbox.bottom)) / 2) || 0,
+    midX: (w.bbox && ((w.bbox.x0 ?? w.bbox.left) + (w.bbox.x1 ?? w.bbox.right)) / 2) || 0
+  });
+
+  const totalLine = words.find((w) => /T[O0D]?TAL|TOTAL/i.test((w.text || "").replace(/\s/g, "")));
+  const totalY = totalLine?.bbox ? (totalLine.bbox.y0 ?? totalLine.bbox.top) : 1e9;
+  const below = words
+    .filter((w) => {
+      const y = w.bbox ? (w.bbox.y0 ?? w.bbox.top) : 0;
+      return y < totalY - 10;
+    })
+    .map(norm)
+    .sort((a, b) => a.midY - b.midY || a.midX - b.midX);
 
   const rows = [];
   let currentRow = [];
@@ -53,71 +74,16 @@ export function extractTableFromWords(words) {
   return rows;
 }
 
-/**
- * Parse a single row: tokens left-to-right; last 3 numeric = amount, rate, weight; rest map to slNo, dc, date, gg, fabric, counts, mill, dia.
- */
 function parseRowTokens(tokens) {
   const values = [];
-  const indices = [];
-  tokens.forEach((t, i) => {
+  tokens.forEach((t) => {
     const n = parseRepairedNumber(t);
-    if (n != null && n >= 0) {
-      values.push(n);
-      indices.push(i);
-    }
+    if (n != null && n >= 0) values.push(n);
   });
   if (values.length < 3) return null;
-
   const amount = values[values.length - 1];
   const rate = values[values.length - 2];
   const weight = values[values.length - 3];
   if (amount <= 0 || amount > 1e9) return null;
-
-  const thirdLastIdx = indices[indices.length - 3];
-  const leading = tokens.slice(0, thirdLastIdx);
-
-  return {
-    slNo: leading[0] ?? null,
-    dc: leading[1] ?? null,
-    date: leading[2] ?? null,
-    gg: leading[3] ?? null,
-    fabric: leading.length >= 8 ? leading.slice(4, -3).join(" ") : (leading[4] ?? null),
-    counts: leading.length >= 7 ? leading[leading.length - 3] : null,
-    mill: leading.length >= 7 ? leading[leading.length - 2] : null,
-    dia: leading.length >= 7 ? leading[leading.length - 1] : null,
-    weight,
-    rate,
-    amount
-  };
-}
-
-/**
- * Extract table rows from plain text (line-based). Uses same last-3-numeric rule per line.
- * @param {string} text - Raw OCR text from table region
- * @returns {Array<{ slNo, dc, date, gg, fabric, counts, mill, dia, weight, rate, amount }>}
- */
-export function extractTableFromText(text) {
-  if (!text || typeof text !== "string") return [];
-
-  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
-  const totalIdx = lines.findIndex((l) => isFuzzyTotal(l) || /^T[O0D]?TAL$/i.test(l.replace(/\s/g, "")));
-  const endIdx = totalIdx >= 0 ? totalIdx : lines.length;
-  const headerKeywords = /S\.?\s*No|D\.?\s*C\.?|Fabric|Wt\.?\s*Kgs|Rate|Amount/i;
-  let startIdx = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (headerKeywords.test(lines[i])) {
-      startIdx = i + 1;
-      break;
-    }
-  }
-
-  const rows = [];
-  for (let i = startIdx; i < endIdx; i++) {
-    const line = lines[i];
-    if (/TOTAL|CGST|SGST|NET\s*T/i.test(line)) break;
-    const tokens = line.split(/\s+/).filter(Boolean);
-    const parsed = parseRowTokens(tokens);
-    if (parsed) rows.push(parsed);
-  }
-  return rows;
+  return { weight, rate, amount };
 }

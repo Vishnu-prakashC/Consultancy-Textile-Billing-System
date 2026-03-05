@@ -1,56 +1,54 @@
 /**
- * RegionCropper.js — Crop canvas into regions using normalized layout (0–1 fractions).
- * rightSide: true means use right half of the vertical band (e.g. customer left, billMeta right).
+ * RegionCropper.js — Crop canvas into regions using normalized layout (0–1).
+ * left/right optional; when omitted region uses full width.
  */
 
 import { NEW_GOOD_NITS_LAYOUT } from "./InvoiceLayout.js";
 
 /**
  * Crop a single region from the source canvas.
- * @param {HTMLCanvasElement} imageCanvas - Full-page canvas (e.g. preprocessed)
- * @param {Object} regionConfig - { top, bottom, left?, right?, rightSide? }
- *   top/bottom: 0–1 fraction of height. left/right: 0–1 fraction of width (optional).
- *   If rightSide is true, use left=0.5, right=1 for the same vertical band.
- * @returns {HTMLCanvasElement} New canvas containing only the region
+ * @param {HTMLCanvasElement} canvas - Full-page canvas (e.g. preprocessed)
+ * @param {Object} region - { top, bottom, left?, right? } (0–1 fractions)
+ * @returns {HTMLCanvasElement} Cropped canvas
  */
-export function cropRegion(imageCanvas, regionConfig) {
-  const w = imageCanvas.width;
-  const h = imageCanvas.height;
+export function cropRegion(canvas, region) {
+  const w = canvas.width;
+  const h = canvas.height;
 
-  let left = regionConfig.left;
-  let right = regionConfig.right;
-  if (regionConfig.rightSide === true) {
-    left = 0.5;
-    right = 1;
-  } else if (left == null) left = 0;
-  if (right == null) right = 1;
+  const top = region.top * h;
+  const bottom = region.bottom * h;
+  const left = region.left != null ? region.left * w : 0;
+  const right = region.right != null ? region.right * w : w;
 
-  const top = regionConfig.top ?? 0;
-  const bottom = regionConfig.bottom ?? 1;
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = Math.max(1, Math.round(right - left));
+  cropCanvas.height = Math.max(1, Math.round(bottom - top));
 
-  const sx = Math.round(left * w);
-  const sy = Math.round(top * h);
-  const sw = Math.round((right - left) * w);
-  const sh = Math.round((bottom - top) * h);
+  const ctx = cropCanvas.getContext("2d");
+  ctx.drawImage(
+    canvas,
+    left,
+    top,
+    right - left,
+    bottom - top,
+    0,
+    0,
+    cropCanvas.width,
+    cropCanvas.height
+  );
 
-  const crop = document.createElement("canvas");
-  crop.width = Math.max(1, sw);
-  crop.height = Math.max(1, sh);
-  const ctx = crop.getContext("2d");
-  ctx.drawImage(imageCanvas, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
-  return crop;
+  return cropCanvas;
 }
 
 /**
- * Crop all regions from the layout into an object of canvases.
- * @param {HTMLCanvasElement} imageCanvas
+ * Crop all regions from the layout.
+ * @param {HTMLCanvasElement} canvas
  * @param {Object} [layout] - Default NEW_GOOD_NITS_LAYOUT
- * @returns {Object.<string, HTMLCanvasElement>}
  */
-export function cropAllRegions(imageCanvas, layout = NEW_GOOD_NITS_LAYOUT) {
+export function cropAllRegions(canvas, layout = NEW_GOOD_NITS_LAYOUT) {
   const out = {};
   for (const [name, config] of Object.entries(layout)) {
-    out[name] = cropRegion(imageCanvas, config);
+    out[name] = cropRegion(canvas, config);
   }
   return out;
 }

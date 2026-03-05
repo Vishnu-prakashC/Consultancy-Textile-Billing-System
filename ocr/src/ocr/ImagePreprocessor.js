@@ -1,13 +1,11 @@
 /**
- * ImagePreprocessor.js — Production image preprocessing for OCR accuracy.
- * Pipeline: grayscale → contrast → sharpen → noise reduction → brightness normalize.
- * Optional deskew. Uses HTML Canvas; returns processed canvas.
+ * ImagePreprocessor.js — OCR-oriented image preprocessing.
+ * Simple mode: grayscale only (matches exact invoice pipeline).
+ * Advanced mode: grayscale → contrast → sharpen → noise reduction → brightness normalize; optional deskew.
  */
 
 /**
  * Load image from File, Blob, or data URL into an Image element.
- * @param {HTMLImageElement|File|Blob|string} source
- * @returns {Promise<HTMLImageElement>}
  */
 function loadImage(source) {
   if (source instanceof HTMLImageElement && source.complete && source.naturalWidth) {
@@ -41,19 +39,54 @@ function loadImage(source) {
 }
 
 /**
- * Convert image data to grayscale (luminance weights).
+ * Simple preprocess: grayscale only. Accepts already-loaded Image or loads from File/Blob/URL.
+ * Same as your exact pipeline: canvas → drawImage → getImageData → gray = 0.3*r+0.59*g+0.11*b → putImageData → return canvas.
+ * @param {HTMLImageElement|File|Blob|string} img - Image element, file, blob, or URL
+ * @returns {Promise<HTMLCanvasElement>}
  */
-function applyGrayscale(data) {
+export async function preprocessImage(img, options = {}) {
+  const image = await loadImage(img);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+
+  ctx.drawImage(image, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
   for (let i = 0; i < data.length; i += 4) {
-    const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    data[i] = data[i + 1] = data[i + 2] = Math.round(g);
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = 0.3 * r + 0.59 * g + 0.11 * b;
+    data[i] = gray;
+    data[i + 1] = gray;
+    data[i + 2] = gray;
   }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  // Advanced pipeline (optional): contrast, sharpen, noise reduction, brightness
+  if (options.advanced) {
+    applyContrast(data, options.contrastFactor ?? 1.4);
+    ctx.putImageData(imageData, 0, 0);
+    applySharpen(imageData);
+    ctx.putImageData(imageData, 0, 0);
+    if (options.noiseReduction !== false) {
+      applyNoiseReduction(imageData);
+      ctx.putImageData(imageData, 0, 0);
+    }
+    applyBrightnessNormalize(data);
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  return canvas;
 }
 
-/**
- * Increase contrast around midpoint (128).
- */
-function applyContrast(data, factor = 1.4) {
+function applyContrast(data, factor) {
   const mid = 128;
   for (let i = 0; i < data.length; i += 4) {
     const g = data[i];
@@ -129,44 +162,3 @@ function applyBrightnessNormalize(data) {
   }
 }
 
-/**
- * Preprocess image for OCR. Returns a new canvas with the processed image.
- * @param {HTMLImageElement|File|Blob|string} image - Input image (element, file, blob, or URL)
- * @param {Object} options - { contrastFactor, skipNoiseReduction, skipDeskew }
- * @returns {Promise<HTMLCanvasElement>} Processed canvas
- */
-export async function preprocessImage(image, options = {}) {
-  const {
-    contrastFactor = 1.4,
-    skipNoiseReduction = false,
-    skipDeskew = true
-  } = options;
-
-  const img = await loadImage(image);
-  const w = img.naturalWidth || img.width;
-  const h = img.naturalHeight || img.height;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0, w, h);
-
-  let imageData = ctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-
-  applyGrayscale(data);
-  applyContrast(data, contrastFactor);
-  applySharpen(imageData);
-  if (!skipNoiseReduction) applyNoiseReduction(imageData);
-  applyBrightnessNormalize(data);
-
-  ctx.putImageData(imageData, 0, 0);
-
-  // Optional deskew: would require line detection; skipped by default
-  if (!skipDeskew && typeof deskew === "function") {
-    // Placeholder: if deskew(canvas) is provided elsewhere, call it
-  }
-
-  return canvas;
-}

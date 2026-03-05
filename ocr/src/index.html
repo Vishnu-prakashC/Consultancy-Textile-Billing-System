@@ -3,35 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NEW GOOD NITS — Region OCR Pipeline</title>
+  <title>NEW GOOD NITS — Invoice OCR</title>
 </head>
 <body>
-  <h1>NEW GOOD NITS — Region-based OCR</h1>
-  <p>Upload an invoice image to run the full pipeline: preprocess → crop regions → OCR per region → extract → fill form.</p>
-  <input type="file" id="fileInput" accept="image/jpeg,image/png,image/jpg">
-  <pre id="log"></pre>
+  <h1>NEW GOOD NITS — Region OCR</h1>
+  <p>Upload an invoice image. Pipeline: preprocess → OpenCV (perspective, deskew, noise, threshold) → crop regions → OCR → extract.</p>
+  <input type="file" id="file" accept="image/jpeg,image/png,image/jpg">
+  <pre id="out"></pre>
+
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script type="module">
-    import { processInvoice, processAndFillForm } from "./main/InvoiceProcessor.js";
+    import { processInvoice } from "./main/InvoiceProcessor.js";
 
-    const fileInput = document.getElementById("fileInput");
-    const log = document.getElementById("log");
-
-    fileInput.addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
+    document.getElementById("file").onchange = async (e) => {
+      const file = e.target.files[0];
       if (!file) return;
-      log.textContent = "Processing...";
-      try {
-        const data = await processInvoice(file, { tesseract: window.Tesseract, logConfidence: true });
-        log.textContent = JSON.stringify(data, null, 2);
-        if (typeof processAndFillForm === "function" && document.getElementById("ngnBillNo")) {
-          processAndFillForm(file, { logConfidence: true });
+
+      const out = document.getElementById("out");
+      out.textContent = "Loading OpenCV & image...";
+
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+
+      img.onload = async () => {
+        out.textContent = "Processing (preprocess → OpenCV → OCR)...";
+        try {
+          const data = await processInvoice(img, {
+            tesseract: window.Tesseract,
+            reuseWorker: false,
+            useOpenCV: true,
+            logConfidence: true
+          });
+          out.textContent = JSON.stringify(data, null, 2);
+          console.log(data);
+          URL.revokeObjectURL(img.src);
+        } catch (err) {
+          out.textContent = "Error: " + err.message;
+          console.error(err);
         }
-      } catch (err) {
-        log.textContent = "Error: " + err.message;
-        console.error(err);
-      }
-    });
+      };
+    };
   </script>
 </body>
 </html>
