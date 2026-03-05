@@ -96,9 +96,8 @@ function topPercent(text, percent) {
 }
 
 /**
- * Extract bill metadata. Bill No: STRICT — only top 25%, 1–6 digits after "No", reject GST line.
- * @param {string} text - Full OCR text (prefer normalized)
- * @returns {{ billNo: string|null, date: string|null, jobNo: string|null, partyDcNo: string|null }}
+ * Extract bill metadata. Bill No: STRICT — only top 25%, 1–6 digits after "No", reject GST/phone lines.
+ * Reject 5-digit "billNo" when the line looks like a phone (e.g. "98947 90888").
  */
 export function extractBillMeta(text) {
   const top25 = topPercent(text, 25);
@@ -106,17 +105,22 @@ export function extractBillMeta(text) {
   let billNo = null;
   const lines = top25.split("\n");
   for (const line of lines) {
-    if (/GST\s*No/i.test(line)) continue;
+    if (/GST\s*No|TIN|PAN|UDYAM|Phone|[\d]{5}\s+[\d]{5}/i.test(line)) continue;
     const m = line.match(/\bNo\s*[:\-]?\s*(\d{1,6})\b/);
     if (m && m[1].length <= 6 && /^\d+$/.test(m[1])) {
-      billNo = m[1];
+      const num = m[1];
+      if (num.length === 5 && line.match(/\d{5}\s*\d{5}/)) continue;
+      billNo = num;
       break;
     }
   }
   if (!billNo) {
     const fallback = top25.match(/\b(\d{1,6})\b/);
-    if (fallback && !/GST|TIN|PAN|UDYAM/i.test(top25.slice(0, fallback.index + 50))) {
-      billNo = fallback[1];
+    if (fallback && !/GST|TIN|PAN|UDYAM|[\d]{5}\s+[\d]{5}/i.test(top25.slice(0, fallback.index + 50))) {
+      const num = fallback[1];
+      if (!(num.length === 5 && top25.slice(fallback.index).match(/\d{5}\s*\d{5}/))) {
+        billNo = num;
+      }
     }
   }
 

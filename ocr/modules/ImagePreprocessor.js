@@ -5,12 +5,12 @@
  * cropRegions(blob, width, height) returns region blobs for region-based OCR (NEW GOOD NITS layout).
  */
 
-/** NEW GOOD NITS layout: fractions of page height/width (0–1). Customer and BillMeta share same vertical band, split left/right. */
+/** NEW GOOD NITS layout: fractions of page height/width (0–1). Slightly tighter to avoid header (phones) bleeding into bill meta. */
 export const NEW_GOOD_NITS_LAYOUT = {
-  header:   { top: 0,    bottom: 0.20, left: 0, right: 1 },
-  customer: { top: 0.20, bottom: 0.38, left: 0, right: 0.52 },
-  billMeta: { top: 0.20, bottom: 0.38, left: 0.48, right: 1 },
-  table:    { top: 0.38, bottom: 0.75, left: 0, right: 1 },
+  header:   { top: 0,    bottom: 0.18, left: 0, right: 1 },
+  customer: { top: 0.19, bottom: 0.37, left: 0, right: 0.52 },
+  billMeta: { top: 0.19, bottom: 0.37, left: 0.50, right: 1 },
+  table:    { top: 0.37, bottom: 0.75, left: 0, right: 1 },
   totals:   { top: 0.75, bottom: 0.95, left: 0, right: 1 }
 };
 

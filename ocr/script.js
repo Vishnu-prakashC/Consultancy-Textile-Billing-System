@@ -1424,7 +1424,30 @@ const OCRModule = {
     let imageSource = file;
     this.lastOcrScale = 1;
     try {
-      if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
+      // Prefer OpenCV preprocessing for camera photos (perspective, deskew, noise, adaptive threshold)
+      if (typeof window !== 'undefined' && window.OpenCVPreprocess?.isAvailable?.() && window.OpenCVPreprocess.runOpenCVPreprocess) {
+        UIModule.showLoading('Preparing image (OpenCV: perspective, deskew, threshold)...');
+        const img = await new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const i = new Image();
+          i.onload = () => { URL.revokeObjectURL(url); resolve(i); };
+          i.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+          i.src = url;
+        });
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = origW * 2;
+        canvas.height = origH * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const preprocessed = window.OpenCVPreprocess.runOpenCVPreprocess(canvas);
+        imageSource = await new Promise((res, rej) => {
+          preprocessed.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95);
+        });
+        this._lastOriginalSize = { w: preprocessed.width, h: preprocessed.height };
+        this.lastOcrScale = 1;
+      } else if (typeof window !== 'undefined' && window.ImagePreprocessor && typeof window.ImagePreprocessor.preprocessImage === 'function') {
         const { blob, originalWidth, originalHeight } = await window.ImagePreprocessor.preprocessImage(file);
         imageSource = blob;
         this.lastOcrScale = 2;
