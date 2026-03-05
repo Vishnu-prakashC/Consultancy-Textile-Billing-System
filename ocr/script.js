@@ -443,8 +443,74 @@ const ValidationModule = {
 };
 
 // ============================================================================
+// INVOICE HASH (duplicate detection)
+// ============================================================================
+/**
+ * Generate SHA-256 hash of invoice image (data URL or canvas) for duplicate detection.
+ * @param {string|HTMLCanvasElement} dataUrlOrCanvas - Data URL string or canvas element
+ * @returns {Promise<string>} Hex string
+ */
+async function generateInvoiceHash(dataUrlOrCanvas) {
+  let dataUrl = typeof dataUrlOrCanvas === 'string' ? dataUrlOrCanvas : null;
+  if (!dataUrl && dataUrlOrCanvas && typeof dataUrlOrCanvas.toDataURL === 'function') {
+    dataUrl = dataUrlOrCanvas.toDataURL('image/png');
+  }
+  if (!dataUrl) return '';
+  const buf = new TextEncoder().encode(dataUrl);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// ============================================================================
 // MODULE: UI RENDERING & INTERACTION
 // ============================================================================
+/**
+ * Draw OCR word bounding boxes on canvas. Use inside OCR pipeline; words must have bbox in canvas coordinates.
+ * @param {HTMLCanvasElement} canvas
+ * @param {Array<{ bbox: { x0, y0, x1, y1 } }>} words
+ */
+function drawOCRBoxes(canvas, words) {
+  if (!canvas || !words || !words.length) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'red';
+  ctx.lineWidth = 2;
+  words.forEach((word) => {
+    const b = word.bbox || word;
+    const x0 = b.x0 != null ? b.x0 : b.left;
+    const y0 = b.y0 != null ? b.y0 : b.top;
+    const x1 = b.x1 != null ? b.x1 : b.right;
+    const y1 = b.y1 != null ? b.y1 : b.bottom;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  });
+}
+
+/**
+ * Draw confidence heatmap: green ≥80%, orange <80%, red <60%.
+ * @param {HTMLCanvasElement} canvas
+ * @param {Array<{ confidence: number, bbox: { x0,y0,x1,y1 } }>} words
+ */
+function drawConfidenceHeatmap(canvas, words) {
+  if (!canvas || !words || !words.length) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.lineWidth = 2;
+  words.forEach((w) => {
+    let color = 'green';
+    if (w.confidence < 60) color = 'red';
+    else if (w.confidence < 80) color = 'orange';
+    ctx.strokeStyle = color;
+    const b = w.bbox || w;
+    const x0 = b.x0 != null ? b.x0 : b.left;
+    const y0 = b.y0 != null ? b.y0 : b.top;
+    const x1 = b.x1 != null ? b.x1 : b.right;
+    const y1 = b.y1 != null ? b.y1 : b.bottom;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  });
+}
+
 const UIModule = {
   /**
    * Initialize UI event listeners and navigation
@@ -454,7 +520,19 @@ const UIModule = {
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const view = e.target.dataset.view;
-        this.switchView(view);
+        if (view) this.switchView(view);
+      });
+    });
+
+    // Sidebar menu buttons (same views)
+    document.querySelectorAll('.menu-btn[data-view]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const view = e.currentTarget.dataset.view;
+        const scrollTo = e.currentTarget.dataset.scroll;
+        if (view) this.switchView(view);
+        if (scrollTo) {
+          setTimeout(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+        }
       });
     });
 
@@ -482,6 +560,9 @@ const UIModule = {
 
     fileInput.addEventListener('change', (e) => {
       if (e.target.files.length > 0) {
+        if (e.target.files.length > 1) {
+          this.showToast(`Multiple files selected. Processing first of ${e.target.files.length}. Re-scan to process the next.`, 'info');
+        }
         this.handleImageSelect(e.target.files[0]);
       }
     });
@@ -533,13 +614,45 @@ const UIModule = {
   switchView(viewName) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    
-    document.getElementById(`${viewName}View`).classList.add('active');
-    document.querySelector(`[data-view="${viewName}"]`).classList.add('active');
+    document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
+
+    const viewEl = document.getElementById(`${viewName}View`);
+    if (viewEl) viewEl.classList.add('active');
+    document.querySelectorAll(`[data-view="${viewName}"]`).forEach(b => b.classList.add('active'));
 
     if (viewName === 'records') {
       DataViewModule.loadRecords();
     }
+    if (viewName === 'analytics') {
+      this.loadAnalytics();
+    }
+  },
+
+  loadAnalytics() {
+    const invoicesEl = document.getElementById('analyticsInvoices');
+    const successEl = document.getElementById('analyticsSuccessRate');
+    const confidenceEl = document.getElementById('analyticsAvgConfidence');
+    if (!invoicesEl) return;
+    StorageModule.getAllBills().then((records) => {
+      const n = records.length;
+      invoicesEl.textContent = n;
+      successEl.textContent = n > 0 ? '100%' : '—';
+      confidenceEl.textContent = '—';
+      const canvas = document.getElementById('analyticsChart');
+      if (canvas && typeof Chart !== 'undefined') {
+        try {
+          if (canvas._chart) canvas._chart.destroy();
+          canvas._chart = new Chart(canvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: ['Success', 'Low Confidence', 'Failed'],
+              datasets: [{ label: 'Count', data: [Math.max(0, n), 0, 0], backgroundColor: ['#22c55e', '#f59e0b', '#ef4444'] }]
+            },
+            options: { responsive: true, maintainAspectRatio: true, scales: { y: { beginAtZero: true } } }
+          });
+        } catch (e) {}
+      }
+    }).catch(() => {});
   },
 
   /**
@@ -775,17 +888,33 @@ const UIModule = {
 
     StorageModule.currentStructuredData = structuredData;
 
+    // Invoice Preview Panel: show bill image beside form
+    const mainPreview = document.getElementById('previewImage');
+    const ngnPreview = document.getElementById('ngnInvoicePreview');
+    const ngnOverlay = document.getElementById('ngnZonesOverlay');
+    if (ngnPreview && mainPreview && mainPreview.src) {
+      ngnPreview.src = mainPreview.src;
+      if (ngnOverlay) { ngnOverlay.style.display = 'none'; ngnOverlay.getContext('2d')?.clearRect(0, 0, ngnOverlay.width, ngnOverlay.height); }
+      const sel = document.getElementById('overlaySelect');
+      if (sel) sel.value = 'none';
+    }
+    this._bindWordBoxesToggle();
+
     const usedOpenCV = scanInfo.usedOpenCV === true;
     const showRecoveryBanner = qualityWasPoor || (overallConfidence > 0 && overallConfidence < 0.7);
     let recoveryBannerHtml = '';
     if (showRecoveryBanner) {
       const isLowQuality = qualityWasPoor;
       const isLowConfidence = overallConfidence > 0 && overallConfidence < 0.7 && !qualityWasPoor;
+      const isVeryLowConfidence = (overallConfidence > 0 && overallConfidence < 0.6);
       let bannerTitle = '';
       let bannerText = 'Please verify highlighted fields before saving.';
       if (isLowQuality) {
         bannerTitle = '⚠️ Low image quality detected';
         bannerText = 'Extraction completed using recovery mode. ' + bannerText;
+      } else if (isVeryLowConfidence) {
+        bannerTitle = '⚠️ Low image quality';
+        bannerText = 'OCR confidence is below 60%. Please rescan for better results. ' + bannerText;
       } else if (isLowConfidence) {
         bannerTitle = '⚠️ Some fields have low OCR confidence';
       }
@@ -817,6 +946,37 @@ const UIModule = {
         </div>
       </div>
     ` : '';
+
+    let totalMismatchHtml = '';
+    let validationStatusHtml = '';
+    const totalsForValidation = structuredData.totals || {};
+    if (window.InvoiceValidation && (structuredData.table || []).length > 0 && (totalsForValidation.subtotal || totalsForValidation.netTotal)) {
+      const vTable = window.InvoiceValidation.validateTableSum(structuredData.table, totalsForValidation.subtotal);
+      const vGst = window.InvoiceValidation.validateGST(totalsForValidation.subtotal, totalsForValidation.cgst, totalsForValidation.sgst);
+      const vNet = window.InvoiceValidation.validateNetTotal(totalsForValidation.subtotal, totalsForValidation.cgst, totalsForValidation.sgst, totalsForValidation.netTotal, totalsForValidation.roundedOff);
+      const checks = [
+        { label: 'Subtotal correct', ok: vTable },
+        { label: 'CGST correct', ok: vGst },
+        { label: 'SGST correct', ok: vGst },
+        { label: 'Net total valid', ok: vNet }
+      ];
+      validationStatusHtml = `
+        <div class="validation-status-card">
+          <strong>Financial Validation</strong>
+          <ul class="validation-status-list">
+            ${checks.map((c) => `<li class="${c.ok ? 'valid' : 'invalid'}">${c.ok ? '✔' : '✗'} ${c.label}</li>`).join('')}
+          </ul>
+        </div>
+      `;
+      if (!vTable || !vGst || !vNet) {
+        totalMismatchHtml = `
+          <div class="recovery-mode-banner total-mismatch-banner" role="alert">
+            <strong>⚠️ Total mismatch detected</strong>
+            <p>Table sum, GST, or Net Total may not match. Please verify totals before saving.</p>
+          </div>
+        `;
+      }
+    }
 
     const scanModeLabel = usedOpenCV ? 'Enhanced scan (OpenCV)' : 'Basic scan';
     const scanModeClass = usedOpenCV ? 'scan-mode-enhanced' : 'scan-mode-basic';
@@ -883,12 +1043,16 @@ const UIModule = {
 
     this.updateNgnTableRowCount();
     this.bindNgnTableActions();
+    this.bindNgnInlineValidation();
 
     const confEl = document.getElementById('ngnOcrConfidence');
-    confEl.innerHTML = recoveryBannerHtml + whyPoorHtml + `
+    confEl.innerHTML = recoveryBannerHtml + totalMismatchHtml + validationStatusHtml + whyPoorHtml + `
       <div class="confidence-row">
         <div class="confidence-badge ${confPercent >= 70 ? 'high' : confPercent >= 50 ? 'medium' : 'low'}">
           <span>OCR Confidence: ${confPercent}%</span>
+        </div>
+        <div class="confidence-meter" role="progressbar" aria-valuenow="${confPercent}" aria-valuemin="0" aria-valuemax="100" title="Confidence Analysis">
+          <div class="confidence-bar" style="width: ${confPercent}%"></div>
         </div>
         <span class="scan-mode-badge ${scanModeClass}" title="${usedOpenCV ? 'Document was aligned and enhanced before OCR' : 'OpenCV was not used; try Re-scan after page has loaded'}">${scanModeLabel}</span>
       </div>
@@ -904,6 +1068,32 @@ const UIModule = {
       });
     }
 
+    // Editable highlight: confidence-based borders (spec: >85% normal, 60–85% orange, <60% red)
+    const fieldToInput = {
+      billNo: 'ngnBillNo',
+      date: 'ngnDate',
+      customer: 'ngnCustomerName',
+      gst: 'ngnCustomerGst',
+      total: 'ngnNetTotal'
+    };
+    Object.keys(fieldToInput).forEach((key) => {
+      const inputId = fieldToInput[key];
+      const el = document.getElementById(inputId);
+      if (!el) return;
+      el.classList.remove('low-confidence-field', 'high-confidence-field', 'confidence-red');
+      const conf = fieldConfidences[key] != null ? fieldConfidences[key] : (key === 'total' ? overallConfidence : overallConfidence);
+      if (typeof conf === 'number' && conf > 0) {
+        const pct = conf * 100;
+        if (pct < 60) {
+          el.classList.add('confidence-red');
+          el.title = 'Low OCR confidence';
+        } else if (pct < 85) {
+          el.classList.add('low-confidence-field');
+        }
+        // >85%: normal border (no class)
+      }
+    });
+
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   },
 
@@ -911,6 +1101,49 @@ const UIModule = {
     const tbody = document.getElementById('ngnTableBody');
     const el = document.getElementById('ngnTableRowCount');
     if (el && tbody) el.textContent = tbody.querySelectorAll('tr').length + ' row(s)';
+  },
+
+  /**
+   * Bind inline validation for NGN required fields (Customer, Bill No, Date, Net Total).
+   * Updates field-status and input classes on blur/input.
+   */
+  bindNgnInlineValidation() {
+    const card = document.getElementById('newGoodNitsResultsCard');
+    if (card && card.dataset.validationBound === '1') return;
+    if (card) card.dataset.validationBound = '1';
+    const requiredIds = ['ngnCustomerName', 'ngnBillNo', 'ngnDate', 'ngnNetTotal'];
+    const validateOne = (id) => {
+      const input = document.getElementById(id);
+      const statusEl = document.getElementById(id + 'Status');
+      if (!input || !statusEl) return;
+      const v = (input.value || '').trim();
+      input.classList.remove('input-valid', 'input-invalid');
+      statusEl.textContent = '';
+      statusEl.className = 'field-status';
+      if (id === 'ngnDate') {
+        if (!v) { statusEl.textContent = 'Required'; statusEl.classList.add('field-status-error'); input.classList.add('input-invalid'); return; }
+        const d = new Date(v);
+        if (Number.isNaN(d.getTime())) { statusEl.textContent = 'Invalid date'; statusEl.classList.add('field-status-error'); input.classList.add('input-invalid'); return; }
+        statusEl.textContent = '✓'; statusEl.classList.add('field-status-ok'); input.classList.add('input-valid');
+        return;
+      }
+      if (id === 'ngnNetTotal') {
+        if (v === '') { statusEl.textContent = 'Required'; statusEl.classList.add('field-status-error'); input.classList.add('input-invalid'); return; }
+        const n = parseFloat(v);
+        if (!Number.isFinite(n) || n < 0) { statusEl.textContent = 'Enter a valid amount'; statusEl.classList.add('field-status-error'); input.classList.add('input-invalid'); return; }
+        statusEl.textContent = '✓'; statusEl.classList.add('field-status-ok'); input.classList.add('input-valid');
+        return;
+      }
+      if (!v) { statusEl.textContent = 'Required'; statusEl.classList.add('field-status-error'); input.classList.add('input-invalid'); return; }
+      statusEl.textContent = '✓'; statusEl.classList.add('field-status-ok'); input.classList.add('input-valid');
+    };
+    requiredIds.forEach((id) => {
+      const input = document.getElementById(id);
+      const statusEl = document.getElementById(id + 'Status');
+      if (!input || !statusEl) return;
+      input.addEventListener('blur', () => validateOne(id));
+      input.addEventListener('input', () => validateOne(id));
+    });
   },
 
   bindNgnTableActions() {
@@ -982,15 +1215,23 @@ const UIModule = {
         if (!isNaN(v)) subtotal += v;
       }
     });
+
+    const cgst = subtotal * 0.025;
+    const sgst = subtotal * 0.025;
+    const sumBeforeRound = subtotal + cgst + sgst;
+    const rounded = Math.round(sumBeforeRound) - sumBeforeRound;
+    const netTotal = subtotal + cgst + sgst + rounded;
+
     const subEl = document.getElementById('ngnSubtotal');
     if (subEl) subEl.value = subtotal > 0 ? subtotal.toFixed(2) : '';
-
-    const cgst = parseFloat(document.getElementById('ngnCgst')?.value || 0);
-    const sgst = parseFloat(document.getElementById('ngnSgst')?.value || 0);
-    const rounded = parseFloat(document.getElementById('ngnRoundedOff')?.value || 0);
-    const net = subtotal + cgst + sgst + rounded;
+    const cgstEl = document.getElementById('ngnCgst');
+    if (cgstEl) cgstEl.value = cgst > 0 ? cgst.toFixed(2) : '';
+    const sgstEl = document.getElementById('ngnSgst');
+    if (sgstEl) sgstEl.value = sgst > 0 ? sgst.toFixed(2) : '';
+    const roundedEl = document.getElementById('ngnRoundedOff');
+    if (roundedEl) roundedEl.value = rounded !== 0 ? rounded.toFixed(2) : '';
     const netEl = document.getElementById('ngnNetTotal');
-    if (netEl) netEl.value = net > 0 ? net.toFixed(2) : (netEl.value || '');
+    if (netEl) netEl.value = netTotal > 0 ? netTotal.toFixed(2) : (netEl.value || '');
   },
 
   /**
@@ -1128,7 +1369,7 @@ const UIModule = {
     const showing = canvas.style.display !== 'none';
     if (showing) {
       canvas.style.display = 'none';
-      if (btn) btn.querySelector('.btn-text').textContent = 'Show extraction zones';
+      if (btn) btn.querySelector('.btn-text').textContent = 'Show field detection';
       return;
     }
 
@@ -1174,23 +1415,232 @@ const UIModule = {
 
     zones.billNo.forEach((b) => {
       const c = toCanvas(b);
-      ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+      ctx.strokeStyle = 'rgba(40, 167, 69, 0.9)';
       ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
     });
-    zones.totals.forEach((b) => {
+    (zones.customer || []).forEach((b) => {
       const c = toCanvas(b);
-      ctx.strokeStyle = 'rgba(40, 167, 69, 0.9)';
+      ctx.strokeStyle = 'rgba(0, 123, 255, 0.9)';
       ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
     });
     zones.tableRows.forEach((row) => {
       row.forEach((b) => {
         const c = toCanvas(b);
-        ctx.strokeStyle = 'rgba(0, 123, 255, 0.9)';
+        ctx.strokeStyle = 'rgba(255, 193, 7, 0.9)';
         ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
       });
     });
+    zones.totals.forEach((b) => {
+      const c = toCanvas(b);
+      ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+      ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
+    });
 
-    if (btn) btn.querySelector('.btn-text').textContent = 'Hide extraction zones';
+      if (btn) btn.querySelector('.btn-text').textContent = 'Hide field detection';
+  },
+
+  /**
+   * Draw confidence heatmap on canvas: green (≥80%), orange (<80%), red (<60%). Uses lastOcrWords.
+   */
+  toggleConfidenceHeatmap() {
+    const canvas = document.getElementById('ngnZonesOverlay');
+    const img = document.getElementById('ngnInvoicePreview');
+    const btn = document.getElementById('toggleConfidenceHeatmapBtn');
+    if (!canvas || !img) return;
+
+    const words = OCRModule.lastOcrWords;
+    if (!words || !words.length) {
+      this.showToast('Confidence heatmap available only after full-page scan.', 'warning');
+      return;
+    }
+
+    const showing = canvas.style.display !== 'none' && canvas.dataset.mode === 'heatmap';
+    if (showing && btn) {
+      canvas.style.display = 'none';
+      canvas.dataset.mode = '';
+      btn.querySelector('.btn-text').textContent = 'Show confidence heatmap';
+      return;
+    }
+
+    const w = img.offsetWidth;
+    const h = img.offsetHeight;
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+    canvas.dataset.mode = 'heatmap';
+
+    const sx = w / nw;
+    const sy = h / nh;
+
+    drawConfidenceHeatmap(canvas, words.map((wd) => {
+      const b = wd.bbox || wd;
+      return {
+        confidence: wd.confidence != null ? wd.confidence : 85,
+        bbox: {
+          x0: (b.x0 != null ? b.x0 : b.left) * sx,
+          y0: (b.y0 != null ? b.y0 : b.top) * sy,
+          x1: (b.x1 != null ? b.x1 : b.right) * sx,
+          y1: (b.y1 != null ? b.y1 : b.bottom) * sy
+        }
+      };
+    }));
+
+    if (btn) btn.querySelector('.btn-text').textContent = 'Hide confidence heatmap';
+  },
+
+  /**
+   * Draw OCR word bounding boxes on the NGN preview panel. Uses lastOcrWords (available after full-page OCR).
+   */
+  toggleOCRWordBoxes() {
+    const canvas = document.getElementById('ngnZonesOverlay');
+    const img = document.getElementById('ngnInvoicePreview');
+    const btn = document.getElementById('toggleWordBoxesBtn');
+    if (!canvas || !img) return;
+
+    const words = OCRModule.lastOcrWords;
+    if (!words || !words.length) {
+      this.showToast('Word boxes available only after full-page scan. Region scan did not store word positions.', 'warning');
+      return;
+    }
+
+    const showing = canvas.style.display !== 'none';
+    if (showing) {
+      canvas.style.display = 'none';
+      canvas.dataset.mode = '';
+      if (btn) btn.querySelector('.btn-text').textContent = 'Show OCR word boxes';
+      return;
+    }
+
+    const w = img.offsetWidth;
+    const h = img.offsetHeight;
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+    canvas.dataset.mode = 'wordboxes';
+
+    const sx = w / nw;
+    const sy = h / nh;
+
+    const scaledWords = words.map((wd) => {
+      const b = wd.bbox || wd;
+      return {
+        bbox: {
+          x0: (b.x0 != null ? b.x0 : b.left) * sx,
+          y0: (b.y0 != null ? b.y0 : b.top) * sy,
+          x1: (b.x1 != null ? b.x1 : b.right) * sx,
+          y1: (b.y1 != null ? b.y1 : b.bottom) * sy
+        }
+      };
+    });
+    drawOCRBoxes(canvas, scaledWords);
+
+    if (btn) btn.querySelector('.btn-text').textContent = 'Hide OCR word boxes';
+  },
+
+  _bindWordBoxesToggle() {
+    const sel = document.getElementById('overlaySelect');
+    if (!sel || sel.dataset.bound === '1') return;
+    sel.dataset.bound = '1';
+    sel.value = 'none';
+    sel.addEventListener('change', (e) => this.applyOverlayToNgnPreview(e.target.value));
+  },
+
+  /**
+   * Apply chosen overlay to NGN preview panel (single control: none | wordboxes | heatmap | fields).
+   */
+  applyOverlayToNgnPreview(mode) {
+    const canvas = document.getElementById('ngnZonesOverlay');
+    const img = document.getElementById('ngnInvoicePreview');
+    if (!canvas || !img) return;
+
+    canvas.style.display = 'none';
+    canvas.dataset.mode = '';
+    if (canvas._chart) try { canvas._chart.destroy(); } catch (e) {}
+    canvas._chart = null;
+
+    if (mode === 'none') return;
+
+    const words = OCRModule.lastOcrWords;
+    if (!words || !words.length) {
+      if (mode !== 'fields' || !window.SpatialExtractor?.getDebugZones) {
+        this.showToast('Overlay available after full-page scan.', 'warning');
+        return;
+      }
+    }
+
+    const w = img.offsetWidth;
+    const h = img.offsetHeight;
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+    canvas.dataset.mode = mode;
+
+    const sx = w / nw;
+    const sy = h / nh;
+
+    if (mode === 'wordboxes') {
+      const scaledWords = words.map((wd) => {
+        const b = wd.bbox || wd;
+        return {
+          bbox: {
+            x0: (b.x0 != null ? b.x0 : b.left) * sx,
+            y0: (b.y0 != null ? b.y0 : b.top) * sy,
+            x1: (b.x1 != null ? b.x1 : b.right) * sx,
+            y1: (b.y1 != null ? b.y1 : b.bottom) * sy
+          }
+        };
+      });
+      drawOCRBoxes(canvas, scaledWords);
+      return;
+    }
+
+    if (mode === 'heatmap') {
+      drawConfidenceHeatmap(canvas, words.map((wd) => {
+        const b = wd.bbox || wd;
+        return {
+          confidence: wd.confidence != null ? wd.confidence : 85,
+          bbox: {
+            x0: (b.x0 != null ? b.x0 : b.left) * sx,
+            y0: (b.y0 != null ? b.y0 : b.top) * sy,
+            x1: (b.x1 != null ? b.x1 : b.right) * sx,
+            y1: (b.y1 != null ? b.y1 : b.bottom) * sy
+          }
+        };
+      }));
+      return;
+    }
+
+    if (mode === 'fields' && window.SpatialExtractor?.getDebugZones && words?.length) {
+      const scale = OCRModule.lastOcrScale || 1;
+      const invScale = 1 / scale;
+      const zones = window.SpatialExtractor.getDebugZones(words);
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineWidth = 2;
+      const toC = (b) => ({
+        x0: (b.x0 * invScale) * sx, y0: (b.y0 * invScale) * sy,
+        x1: (b.x1 * invScale) * sx, y1: (b.y1 * invScale) * sy
+      });
+      zones.billNo.forEach((b) => { const c = toC(b); ctx.strokeStyle = 'rgba(40, 167, 69, 0.9)'; ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0); });
+      (zones.customer || []).forEach((b) => { const c = toC(b); ctx.strokeStyle = 'rgba(0, 123, 255, 0.9)'; ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0); });
+      zones.tableRows.forEach((row) => { row.forEach((b) => { const c = toC(b); ctx.strokeStyle = 'rgba(255, 193, 7, 0.9)'; ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0); }); });
+      zones.totals.forEach((b) => { const c = toC(b); ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)'; ctx.strokeRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0); });
+    }
   },
 
   /**
@@ -1297,13 +1747,27 @@ const UIModule = {
     const overlay = document.getElementById('loadingOverlay');
     overlay.querySelector('.loading-text').textContent = message;
     overlay.style.display = 'flex';
+    this.resetTimelineSteps();
+  },
+
+  resetTimelineSteps() {
+    document.querySelectorAll('.ai-timeline li').forEach((li) => li.classList.remove('done'));
+  },
+
+  setTimelineStep(stepNumber) {
+    for (let i = 1; i <= stepNumber; i++) {
+      const li = document.getElementById(`timelineStep${i}`);
+      if (li) li.classList.add('done');
+    }
   },
 
   /**
    * Hide loading overlay
    */
   hideLoading() {
-    document.getElementById('loadingOverlay').style.display = 'none';
+    this.setTimelineStep(5);
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'none';
   },
 
   /**
@@ -1546,6 +2010,27 @@ const OCRModule = {
       console.warn('Preprocess/upscale failed, using original image:', e.message);
     }
 
+    UIModule.setTimelineStep(1);
+
+    try {
+      let dataUrlForHash = null;
+      if (imageSource instanceof Blob || imageSource instanceof File) {
+        dataUrlForHash = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(imageSource);
+        });
+      }
+      if (dataUrlForHash) {
+        const hash = await generateInvoiceHash(dataUrlForHash);
+        const existing = await StorageModule.findByInvoiceHash(hash);
+        if (existing) {
+          UIModule.showToast('Duplicate invoice detected. This bill was already uploaded.', 'warning');
+        }
+      }
+    } catch (e) { /* ignore hash errors */ }
+
     const useRegionOcr = this._lastOriginalSize &&
       typeof window !== 'undefined' &&
       window.ImagePreprocessor?.cropRegions &&
@@ -1559,6 +2044,8 @@ const OCRModule = {
         this.updateProgress(30, 'Cropping regions & scanning...');
         const regions = await window.ImagePreprocessor.cropRegions(imageSource, w, h);
         if (this.cancelRequested) throw new Error('Scan cancelled');
+
+        UIModule.setTimelineStep(2);
 
         const worker = await Tesseract.createWorker('eng');
         this.currentWorker = worker;
@@ -1592,6 +2079,8 @@ const OCRModule = {
         const headerText = await recognizeRegion(regions.header, 'header');
         const template = window.TemplateEngine.detectTemplate(headerText);
 
+        UIModule.setTimelineStep(3);
+
         if (template === 'NEW_GOOD_NITS') {
           this.updateProgress(50, 'Scanning customer & bill meta...');
           const [customerText, billMetaText] = await Promise.all([
@@ -1617,6 +2106,8 @@ const OCRModule = {
           });
           this.lastOcrWords = [];
 
+          UIModule.setTimelineStep(4);
+
           const { billData, fieldConfidences } = DataExtractionModule._mapNewGoodNitsToBillData(structuredData, { words: [] });
           this.updateProgress(100, 'Extraction completed.');
           UIModule.hideLoading();
@@ -1638,6 +2129,8 @@ const OCRModule = {
     }
 
     this.updateProgress(60, 'Performing OCR...');
+    UIModule.setTimelineStep(2);
+
     const worker = await Tesseract.createWorker('eng');
     this.currentWorker = worker;
 
@@ -2270,6 +2763,18 @@ const StorageModule = {
   },
 
   /**
+   * Find bill by invoice image hash (for duplicate detection).
+   * @param {string} hash - SHA-256 hex from generateInvoiceHash
+   * @returns {Promise<object|null>}
+   */
+  async findByInvoiceHash(hash) {
+    if (!hash) return null;
+    if (!this.db) await this.init();
+    const all = await this.getAllBills();
+    return all.find((r) => r.invoiceHash === hash) || null;
+  },
+
+  /**
    * Get all bills from IndexedDB
    */
   async getAllBills() {
@@ -2443,7 +2948,11 @@ const DataModule = {
     }
 
     try {
-      // Save to IndexedDB
+      if (StorageModule.currentImageData) {
+        try {
+          billData.invoiceHash = await generateInvoiceHash(StorageModule.currentImageData);
+        } catch (e) {}
+      }
       await StorageModule.saveBill(billData);
       
       UIModule.showToast('Bill saved successfully!', 'success');
@@ -2547,6 +3056,12 @@ const DataModule = {
       gst: parseFloat(totals.cgst || 0) + parseFloat(totals.sgst || 0),
       total: parseFloat(netTotal)
     };
+
+    try {
+      if (StorageModule.currentImageData) {
+        record.invoiceHash = await generateInvoiceHash(StorageModule.currentImageData);
+      }
+    } catch (err) { /* ignore */ }
 
     try {
       await StorageModule.saveBill(record);
@@ -2758,6 +3273,65 @@ const ExportModule = {
     } catch (error) {
       console.error('Export error:', error);
       UIModule.showToast('Failed to export CSV', 'error');
+    }
+  },
+
+  /**
+   * Export all records to Excel (.xlsx) using SheetJS.
+   */
+  async exportToExcel() {
+    if (typeof XLSX === 'undefined') {
+      UIModule.showToast('Excel export library not loaded. Please refresh the page.', 'error');
+      return;
+    }
+    try {
+      const records = await StorageModule.getAllBills();
+      if (records.length === 0) {
+        UIModule.showToast('No records to export', 'error');
+        return;
+      }
+      const rows = records.map(r => ({
+        'Bill No': r.billNo,
+        'Date': r.date ? new Date(r.date).toLocaleDateString() : '',
+        'Customer': r.customer || '',
+        'GST': r.gst != null ? r.gst : '',
+        'Total': r.total != null ? r.total : '',
+        'Created': r.createdAt ? new Date(r.createdAt).toLocaleString() : '',
+        'Synced': r.synced ? 'Yes' : 'No'
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+      XLSX.writeFile(wb, `invoices_${new Date().toISOString().split('T')[0]}.xlsx`);
+      UIModule.showToast(`Exported ${records.length} records to Excel`, 'success');
+    } catch (error) {
+      console.error('Excel export error:', error);
+      UIModule.showToast('Failed to export Excel', 'error');
+    }
+  },
+
+  /**
+   * Export all records to JSON file.
+   */
+  async exportToJSON() {
+    try {
+      const records = await StorageModule.getAllBills();
+      if (records.length === 0) {
+        UIModule.showToast('No records to export', 'error');
+        return;
+      }
+      const json = JSON.stringify(records, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `invoices_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      UIModule.showToast(`Exported ${records.length} records to JSON`, 'success');
+    } catch (error) {
+      console.error('JSON export error:', error);
+      UIModule.showToast('Failed to export JSON', 'error');
     }
   }
 };

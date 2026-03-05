@@ -295,11 +295,11 @@ export function extractSpatial(words, textResult) {
 }
 
 /**
- * Return bboxes for debug overlay: red = Bill No, green = Totals band, blue = table rows.
- * Each bbox is { x0, y0, x1, y1 } in same coordinate system as input words (e.g. upscaled image).
+ * Return bboxes for debug overlay: Bill No = green, Customer = blue, Table rows = yellow, Totals = red.
+ * Each bbox is { x0, y0, x1, y1 } in same coordinate system as input words.
  */
 export function getDebugZones(words) {
-  if (!words?.length) return { billNo: [], totals: [], tableRows: [] };
+  if (!words?.length) return { billNo: [], customer: [], totals: [], tableRows: [] };
 
   const normalized = words.map((w, i) => normalizeWord(w, i));
   const { pageHeight } = getPageDimensions(normalized);
@@ -321,6 +321,15 @@ export function getDebugZones(words) {
     if (!next) continue;
     billNo.push(bbox(w), bbox(next));
     break;
+  }
+
+  const customer = [];
+  const gstWord = normalized.find(
+    (w) => /^[0-9]{2}[A-Z][A-Z0-9]{10,14}$/.test((w.text || "").replace(/\s/g, ""))
+  );
+  if (gstWord && gstWord.text.replace(/\s/g, "").length === 15) {
+    const above = normalized.filter((w) => w.midY < gstWord.midY - 5);
+    if (above.length) customer.push(...above.map(bbox));
   }
 
   let totalY = null;
@@ -351,7 +360,7 @@ export function getDebugZones(words) {
   }
   if (currentRow.length) tableRows.push(currentRow.map(bbox));
 
-  return { billNo, totals, tableRows };
+  return { billNo, customer, totals, tableRows };
 }
 
 function bbox(normalizedWord) {

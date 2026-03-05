@@ -34,7 +34,6 @@ export function normalizeOcrText(text) {
  */
 export function extractCustomer(text) {
   const normalized = (text || "").trim();
-  if (/33AAFFN|33982424698/.test(normalized)) return null;
   const hasHeaderBleed = /TIN\s*:|PAN\s*:|NEW\s*GOOD\s*NITS|KNITTING\s*INVOICE|Manikandan\s*Nagar|Dharapuram\s*Road/i.test(normalized);
   const sellerGstPrefix = /^33AAFFN/i;
 
@@ -51,12 +50,12 @@ export function extractCustomer(text) {
     const toMatch = normalized.match(/(?:To|T0|T\s*o|7o)\.?\s*([\s\S]*?)(?=GST\s*No\s*[:\-]?\s*[A-Z0-9]{15})/i);
     const block = toMatch ? toMatch[1].trim() : normalized.slice(0, customerGstMatch.index);
     const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
-    const nameLine = lines.find((l) => /[A-Z]{2,}/.test(l) && l.length <= 60 && !/TIN|PAN|GSTIN|^\d/.test(l));
-    const name = nameLine || lines[0] || null;
+    const nameLine = lines.find((l) => /[A-Z]{2,}/.test(l) && l.length <= 60 && !/TIN|PAN|GSTIN|^\d/.test(l) && !/^M\/s\s*$/i.test(l));
+    const nameFromBlock = nameLine || lines.find((l) => /GARMENTS|TEXTILES|TRADERS|PVT|LTD|CO\./i.test(l)) || lines[0] || null;
     const stateM = normalized.match(/STATE\s*[:\-]?\s*[^,\n]*\s*\((\d+)\)|Tamil\s*Nadu\s*\((\d+)\)|\((\d+)\)/i);
     const state = (stateM && (stateM[1] || stateM[2] || stateM[3])) || null;
     return {
-      name,
+      name: nameFromBlock,
       address: lines.filter((l) => l !== nameLine).join(", ") || "",
       gstNo: customerGstMatch.gst,
       state
@@ -145,7 +144,8 @@ export function extractBillMeta(text) {
   const postalCodeNumbers = ["641", "602", "604"];
 
   let billNo = null;
-  const noMatch = full.match(/\bNo\s*[:\-]?\s*(\d{2,4})\b/);
+  const noLineRe = /\bNo\s*[:\-]?\s*(\d{2,4})\b/;
+  const noMatch = full.match(noLineRe);
   if (noMatch && !postalCodeNumbers.includes(noMatch[1])) {
     billNo = noMatch[1];
   }
@@ -171,18 +171,20 @@ export function extractBillMeta(text) {
   const flexibleDate = dateMatch ? dateMatch[0] : null;
   const jobNoMatch = full.match(/Job\s*No\.?\s*[:\-]?\s*(\d+)/i);
   const partyDcMatch = full.match(/Party\s*DC\s*No\.?\s*[:\-]?\s*(\S*)/i);
+  const refMatch = full.match(/Ref\.?\s*[:\-]?\s*(\S*)/i);
 
   return {
     billNo,
     date: flexibleDate,
     jobNo: jobNoMatch ? jobNoMatch[1] : null,
-    partyDcNo: partyDcMatch ? partyDcMatch[1].trim() || null : null
+    partyDcNo: partyDcMatch ? partyDcMatch[1].trim() || null : null,
+    ref: refMatch ? refMatch[1].trim() || null : null
   };
 }
 
 /**
  * Extract totals ONLY from block between first TOTAL and NET TOTAL (fuzzy). Map by numeric size.
- * Largest = Net Total, second = Subtotal, two similar small = CGST/SGST, smallest abs = Rounded Off.
+ * Prefer label-based values (CGST 2.5%, SGST 2.5%, Rounded Off, NET TOTAL) and TOTAL line second number (amount).
  * @param {string} text - Full OCR text (prefer normalized)
  * @returns {{ subtotal: string|null, cgst: string|null, sgst: string|null, roundedOff: string|null, netTotal: string|null }}
  */
@@ -202,6 +204,13 @@ export function extractTotals(text) {
     block = block + "\n" + afterNet;
   }
 
+  const labelCgst = block.match(/CGST\s*2\.?5%?\s*[:\-]?\s*[\d.]+\s+([\d,.]+)|CGST\s*2\.?5%?\s*[:\-]?\s*([\d,.]+)/i);
+  const labelSgst = block.match(/SGST\s*2\.?5%?\s*[:\-]?\s*[\d.]+\s+([\d,.]+)|SGST\s*2\.?5%?\s*[:\-]?\s*([\d,.]+)/i);
+  const labelRounded = block.match(/Rounded\s*Off\s*[:\-]?\s*([\d,.\-]+)/i);
+  const labelNet = block.match(/NET\s*T[O0D]?TAL\s*[:\-]?\s*([\d,.]+)/i);
+  const totalLineMatch = block.match(/T[O0D]?TAL\s*[:\-]?\s*[\d.]+\s+([\d,.]+)/) || block.match(/T[O0D]?TAL\s*[:\-]?\s*([\d,.]+)/);
+  const subtotalFromTotal = totalLineMatch ? (totalLineMatch[1] || totalLineMatch[2])?.replace(/,/g, "") : null;
+
   const decimals = [];
   const re = /[\d,]+\.\d+/g;
   let m;
@@ -212,11 +221,11 @@ export function extractTotals(text) {
 
   if (decimals.length === 0) {
     return {
-      subtotal: null,
-      cgst: null,
-      sgst: null,
-      roundedOff: null,
-      netTotal: null
+      subtotal: subtotalFromTotal ?? null,
+      cgst: (labelCgst?.[1] || labelCgst?.[2])?.replace(/,/g, "") ?? null,
+      sgst: (labelSgst?.[1] || labelSgst?.[2])?.replace(/,/g, "") ?? null,
+      roundedOff: labelRounded?.[1]?.replace(/,/g, "") ?? null,
+      netTotal: labelNet?.[1]?.replace(/,/g, "") ?? null
     };
   }
 
@@ -229,22 +238,12 @@ export function extractTotals(text) {
   const roundedRaw = sorted.find((v) => v < 1 && v > -1 && v !== 0) ?? sorted[sorted.length - 1];
   const roundedOff = Math.abs(roundedRaw) < 10 ? roundedRaw : null;
 
-  const labelCgst = block.match(/CGST\s*2\.?5%?\s*[:\-]?\s*([\d,.]+)/i)?.[1];
-  const labelSgst = block.match(/SGST\s*2\.?5%?\s*[:\-]?\s*([\d,.]+)/i)?.[1];
-  const labelRounded = block.match(/Rounded\s*Off\s*[:\-]?\s*([\d,.\-]+)/i)?.[1];
-  const labelNet = block.match(/NET\s*T[O0D]?TAL\s*[:\-]?\s*([\d,.]+)/i)?.[1];
-  const totalLineMatch = block.match(/T[O0D]?TAL\s*[:\-]?\s*[\d.]+\s+([\d,.]+)/) || block.match(/T[O0D]?TAL\s*[:\-]?\s*([\d,.]+)/);
-  const subtotalMatch = block.match(/(?:20[,.]?\d{2,3}[,.]?\d{2}|[\d,]+\.\d{2})/g);
-  const largeNumbers = (subtotalMatch || []).map((s) => parseFloat(s.replace(/,/g, ""))).filter((n) => n > 1000 && n < 1e7).sort((a, b) => b - a);
-  const inferredSubtotal = largeNumbers[1] ?? largeNumbers[0];
-  const inferredNet = largeNumbers[0];
-
   return {
-    subtotal: (totalLineMatch?.[1] || (sorted[1] != null ? String(sorted[1]) : (inferredSubtotal != null ? String(inferredSubtotal) : null)))?.replace(/,/g, "") ?? null,
-    cgst: (labelCgst || (cgst != null ? String(cgst) : null))?.replace(/,/g, "") ?? null,
-    sgst: (labelSgst || (sgst != null ? String(sgst) : null))?.replace(/,/g, "") ?? null,
-    roundedOff: (labelRounded || (roundedOff != null ? String(roundedOff) : null))?.replace(/,/g, "") ?? null,
-    netTotal: (labelNet || (inferredNet != null ? String(inferredNet) : null) || String(netTotal))?.replace(/,/g, "") ?? null
+    subtotal: subtotalFromTotal ?? (sorted[1] != null ? String(sorted[1]) : (subtotal != null ? String(subtotal) : null)),
+    cgst: (labelCgst?.[1] || labelCgst?.[2] || (cgst != null ? String(cgst) : null))?.replace(/,/g, "") ?? null,
+    sgst: (labelSgst?.[1] || labelSgst?.[2] || (sgst != null ? String(sgst) : null))?.replace(/,/g, "") ?? null,
+    roundedOff: (labelRounded?.[1] || (roundedOff != null ? String(roundedOff) : null))?.replace(/,/g, "") ?? null,
+    netTotal: (labelNet?.[1] || String(netTotal))?.replace(/,/g, "") ?? null
   };
 }
 

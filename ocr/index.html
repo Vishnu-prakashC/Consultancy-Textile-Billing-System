@@ -7,22 +7,28 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%234f46e5'/><text x='16' y='22' font-size='18' text-anchor='middle' fill='white'>B</text></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <!-- Header Section -->
-  <header class="app-header">
+<body class="app-modern">
+  <header class="app-header navbar-glass">
     <div class="header-content">
       <div class="company-info">
-        <h1 class="company-name">New Good Nits</h1>
-        <p class="module-title"> Bill Scanning & Data Entry System</p>
+        <h1 class="company-name">AI Invoice Extractor</h1>
       </div>
       <nav class="main-nav">
-        <button class="nav-btn active" data-view="scan">Scan Bill</button>
-        <button class="nav-btn" data-view="records">View Records</button>
+        <button class="nav-btn active" data-view="scan">Dashboard</button>
+        <button class="nav-btn" data-view="records">Invoice History</button>
+        <button class="nav-btn" data-view="analytics">Analytics</button>
       </nav>
     </div>
   </header>
 
-  <!-- Main Container -->
+  <div class="app-layout">
+    <aside class="app-sidebar">
+      <button type="button" class="menu-btn active" data-view="scan">Upload Invoice</button>
+      <button type="button" class="menu-btn" data-view="records">Invoice History</button>
+      <button type="button" class="menu-btn" data-view="analytics">Analytics</button>
+      <button type="button" class="menu-btn" id="sidebarExport" data-view="records" data-scroll="exportCenter">Export Center</button>
+    </aside>
+    <main class="app-main">
   <div class="container">
     <!-- Scan Bill View -->
     <div id="scanView" class="view active">
@@ -34,15 +40,15 @@
         </div>
         <div class="card-body">
           <div class="upload-area" id="uploadArea">
-            <input type="file" id="billImage" accept="image/jpeg,image/jpg,image/png" hidden>
+            <input type="file" id="billImage" accept="image/jpeg,image/jpg,image/png" capture="environment" multiple hidden>
             <div class="upload-placeholder">
               <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
-              <p>Click to upload or drag and drop</p>
-              <p class="file-types">JPG, PNG (Max 10MB)</p>
+              <p>Drag & Drop Invoice</p>
+              <p class="file-types">or click to browse · JPG, PNG (Max 10MB)</p>
             </div>
           </div>
           <div class="preview-container" id="previewContainer" style="display: none;">
@@ -173,14 +179,33 @@
       <!-- NEW GOOD NITS Template-Specific Results -->
       <div class="card ocr-results-card template-results-card" id="newGoodNitsResultsCard" style="display: none;">
         <div class="card-header">
-          <h2>NEW GOOD NITS — Extracted Invoice</h2>
+          <h2>Extracted Invoice</h2>
           <p class="helper-text warning-text">Verify and edit below before saving.</p>
         </div>
         <div class="card-body template-sections">
+          <!-- Invoice Preview Panel: image beside form -->
+          <div class="invoice-review-layout">
+            <div class="invoice-preview-col">
+              <p class="section-label">Invoice image</p>
+              <div class="invoice-preview-wrap">
+                <img id="ngnInvoicePreview" alt="Bill preview" class="invoice-preview-img" />
+                <canvas id="ngnZonesOverlay" class="zones-overlay" style="display: none;" aria-hidden="true"></canvas>
+              </div>
+              <div class="preview-overlay-actions">
+                <label for="overlaySelect" class="overlay-label">Overlay</label>
+                <select id="overlaySelect" class="form-input overlay-select" title="Choose visual overlay on invoice image">
+                  <option value="none">None</option>
+                  <option value="wordboxes">OCR word boxes</option>
+                  <option value="heatmap">Confidence heatmap</option>
+                  <option value="fields">Field detection</option>
+                </select>
+              </div>
+            </div>
+            <div class="invoice-form-col">
           <div class="ocr-confidence" id="ngnOcrConfidence"></div>
 
-          <section class="template-section template-section-company">
-            <h3>🏢 Company</h3>
+          <section class="template-section template-section-company" aria-labelledby="section-company-heading">
+            <h3 id="section-company-heading" class="section-heading">Company</h3>
             <div class="form-grid form-grid-2">
               <div class="form-group full-width">
                 <label for="ngnCompanyName">Company Name</label>
@@ -209,12 +234,13 @@
             </div>
           </section>
 
-          <section class="template-section template-section-customer">
-            <h3>👤 Customer</h3>
+          <section class="template-section template-section-customer" aria-labelledby="section-customer-heading">
+            <h3 id="section-customer-heading" class="section-heading">Customer</h3>
             <div class="form-grid form-grid-2">
               <div class="form-group full-width">
                 <label for="ngnCustomerName">Customer Name <span class="required">*</span></label>
-                <input type="text" id="ngnCustomerName" class="form-input" placeholder="Customer name">
+                <input type="text" id="ngnCustomerName" class="form-input" placeholder="Customer name" aria-describedby="ngnCustomerNameStatus">
+                <span class="field-status" id="ngnCustomerNameStatus" aria-live="polite"></span>
               </div>
               <div class="form-group full-width">
                 <label for="ngnCustomerAddress">Address</label>
@@ -239,16 +265,18 @@
             </div>
           </section>
 
-          <section class="template-section template-section-billmeta">
-            <h3>📦 Bill Meta</h3>
+          <section class="template-section template-section-billmeta" aria-labelledby="section-billmeta-heading">
+            <h3 id="section-billmeta-heading" class="section-heading">Bill details</h3>
             <div class="form-grid form-grid-2">
               <div class="form-group">
                 <label for="ngnBillNo">Bill No <span class="required">*</span></label>
-                <input type="text" id="ngnBillNo" class="form-input" placeholder="Bill No">
+                <input type="text" id="ngnBillNo" class="form-input" placeholder="Bill No" aria-describedby="ngnBillNoStatus">
+                <span class="field-status" id="ngnBillNoStatus" aria-live="polite"></span>
               </div>
               <div class="form-group">
                 <label for="ngnDate">Date <span class="required">*</span></label>
-                <input type="date" id="ngnDate" class="form-input">
+                <input type="date" id="ngnDate" class="form-input" aria-describedby="ngnDateStatus">
+                <span class="field-status" id="ngnDateStatus" aria-live="polite"></span>
               </div>
               <div class="form-group">
                 <label for="ngnJobNo">Job No</label>
@@ -265,8 +293,8 @@
             </div>
           </section>
 
-          <section class="template-section template-section-table">
-            <h3>📊 Table</h3>
+          <section class="template-section template-section-table" aria-labelledby="section-table-heading">
+            <h3 id="section-table-heading" class="section-heading">Line items</h3>
             <div class="table-toolbar">
               <button type="button" class="btn btn-sm btn-outline" id="ngnAddRowBtn" title="Add row">
                 <span class="btn-text">+ Add Row</span>
@@ -289,8 +317,8 @@
             <p class="helper-text table-helper">Edit cells then use <strong>Recalc totals</strong> to update Subtotal / Net Total.</p>
           </section>
 
-          <section class="template-section template-section-totals">
-            <h3>💰 Totals</h3>
+          <section class="template-section template-section-totals" aria-labelledby="section-totals-heading">
+            <h3 id="section-totals-heading" class="section-heading">Totals</h3>
             <div class="totals-toolbar">
               <button type="button" class="btn btn-sm btn-outline" id="ngnRecalcTotalsBtn">
                 <span class="btn-text">🔄 Recalc totals</span>
@@ -319,7 +347,8 @@
               </div>
               <div class="form-group">
                 <label for="ngnNetTotal">Net Total <span class="required">*</span></label>
-                <input type="number" id="ngnNetTotal" class="form-input" step="0.01" min="0" required placeholder="0">
+                <input type="number" id="ngnNetTotal" class="form-input" step="0.01" min="0" required placeholder="0" aria-describedby="ngnNetTotalStatus">
+                <span class="field-status" id="ngnNetTotalStatus" aria-live="polite"></span>
               </div>
             </div>
           </section>
@@ -330,9 +359,8 @@
             </button>
             <button class="btn btn-secondary" onclick="UIModule.clearForm()">Reset Form</button>
             <button class="btn btn-outline" onclick="UIModule.rescanImage()">Re-scan Bill</button>
-            <button type="button" class="btn btn-outline" id="toggleZonesBtn" onclick="UIModule.toggleExtractionZones()" title="Show/hide OCR extraction zones on the image">
-              <span class="btn-text">Show extraction zones</span>
-            </button>
+          </div>
+            </div>
           </div>
         </div>
       </div>
@@ -349,7 +377,7 @@
           <!-- Search and Filter Section -->
           <div class="search-filter-bar">
             <div class="search-group">
-              <input type="text" id="searchInput" class="search-input" placeholder="Search by bill number, customer name, or date...">
+              <input type="text" id="searchInput" class="search-input" placeholder="Search invoice...">
               <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <circle cx="11" cy="11" r="8"></circle>
                 <path d="m21 21-4.35-4.35"></path>
@@ -360,9 +388,25 @@
               <option value="synced">Synced</option>
               <option value="not-synced">Not Synced</option>
             </select>
+          </div>
+
+          <!-- Export Center -->
+          <div class="export-panel card" id="exportCenter">
+            <div class="card-header">
+              <h2>Export Center</h2>
+              <p class="helper-text">Export records for accounting or reporting</p>
+            </div>
+            <div class="card-body export-panel-buttons">
             <button class="btn btn-primary" onclick="ExportModule.exportToCSV()">
               <span class="btn-text">Export CSV</span>
             </button>
+            <button class="btn btn-outline" onclick="ExportModule.exportToExcel()" title="Export records to Excel (.xlsx)">
+              <span class="btn-text">Export Excel</span>
+            </button>
+            <button class="btn btn-outline" onclick="ExportModule.exportToJSON()" title="Export records as JSON">
+              <span class="btn-text">Export JSON</span>
+            </button>
+          </div>
           </div>
 
           <!-- Records List -->
@@ -377,6 +421,36 @@
               </svg>
               <p>No records found. Start by scanning a bill!</p>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics View -->
+    <div id="analyticsView" class="view">
+      <div class="card analytics-card">
+        <div class="card-header">
+          <h2>OCR Analytics</h2>
+          <p class="helper-text">Extraction metrics and success rates</p>
+        </div>
+        <div class="card-body analytics-dashboard">
+          <div class="analytics-stats">
+            <div class="stat-card">
+              <span class="stat-value" id="analyticsInvoices">0</span>
+              <span class="stat-label">Total Invoices</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-value" id="analyticsSuccessRate">—</span>
+              <span class="stat-label">Success Rate</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-value" id="analyticsAvgConfidence">—</span>
+              <span class="stat-label">Avg Confidence</span>
+            </div>
+          </div>
+          <div class="analytics-chart-wrap">
+            <p class="helper-text">Extraction outcomes</p>
+            <canvas id="analyticsChart" height="120" aria-label="Analytics chart"></canvas>
           </div>
         </div>
       </div>
@@ -401,11 +475,20 @@
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
   </div>
+    </main>
+  </div>
 
-  <!-- Loading Overlay -->
-  <div class="loading-overlay" id="loadingOverlay" style="display: none;">
-    <div class="spinner"></div>
-    <p class="loading-text">Processing OCR...</p>
+  <!-- Loading Overlay with AI Extraction Timeline -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+    <div class="loader" aria-hidden="true"></div>
+    <p class="loading-text" id="loadingOverlayText">AI is reading your invoice...</p>
+    <ul class="ai-timeline" id="aiTimeline" aria-label="Extraction steps">
+      <li id="timelineStep1"><span class="step-icon">1</span> Image Preprocessing</li>
+      <li id="timelineStep2"><span class="step-icon">2</span> Layout Detection</li>
+      <li id="timelineStep3"><span class="step-icon">3</span> OCR Processing</li>
+      <li id="timelineStep4"><span class="step-icon">4</span> Field Extraction</li>
+      <li id="timelineStep5"><span class="step-icon">5</span> Validation</li>
+    </ul>
   </div>
 
   <!-- External Libraries -->
@@ -413,6 +496,8 @@
   <script src="https://docs.opencv.org/4.8.0/opencv.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <!-- Application Scripts -->
   <script src="TemplateConfig.js"></script>
   <script type="module" src="modules/bootstrap.js"></script>

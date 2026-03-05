@@ -29,38 +29,38 @@ function getNumericTokens(line) {
 }
 
 /**
- * Check if line looks like a table row: has at least 3 numeric tokens, last looks like amount (decimal).
- * Fallback: decimal, then number, then decimal (weight, rate, amount).
+ * Check if line looks like a table row: has at least 2 numeric tokens at end (rate, amount); prefer 3 (weight, rate, amount).
+ * Relaxed so OCR with bad weight still yields a row.
  */
 function looksLikeTableRow(line) {
   const { values } = getNumericTokens(line);
-  if (values.length < 3) return false;
+  if (values.length < 2) return false;
   const a = values[values.length - 1];
   const r = values[values.length - 2];
-  const w = values[values.length - 3];
-  if (!Number.isFinite(a) || !Number.isFinite(r) || !Number.isFinite(w)) return false;
+  if (!Number.isFinite(a) || !Number.isFinite(r)) return false;
   if (a <= 0 || a > 1e10) return false;
   return true;
 }
 
 /**
- * Parse a single line using backward numeric: last 3 = amount, rate, weight; rest = leading columns.
+ * Parse a single line using backward numeric: last 2 or 3 = (weight?), rate, amount; rest = leading columns.
  */
 function parseRowBackward(line) {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
   const { values, tokens } = getNumericTokens(trimmed);
-  if (values.length < 3) return null;
+  if (values.length < 2) return null;
 
   const amount = values[values.length - 1];
   const rate = values[values.length - 2];
-  const weight = values[values.length - 3];
-  if (!Number.isFinite(amount) || !Number.isFinite(rate) || !Number.isFinite(weight)) return null;
+  const weight = values.length >= 3 ? values[values.length - 3] : null;
+  if (!Number.isFinite(amount) || !Number.isFinite(rate)) return null;
 
-  const thirdLastToken = tokens[tokens.length - 3];
-  const startOfLastThree = trimmed.indexOf(thirdLastToken);
-  const leadingStr = startOfLastThree >= 0 ? trimmed.slice(0, startOfLastThree).trim() : "";
+  const lastTwoStart = values.length >= 3 ? tokens.length - 3 : tokens.length - 2;
+  const thirdLastToken = tokens[lastTwoStart];
+  const startOfLastN = thirdLastToken ? trimmed.indexOf(thirdLastToken) : -1;
+  const leadingStr = startOfLastN >= 0 ? trimmed.slice(0, startOfLastN).trim() : "";
   const leading = leadingStr ? leadingStr.split(/\s+/) : [];
 
   const slNo = leading[0] ?? null;
@@ -81,7 +81,7 @@ function parseRowBackward(line) {
     counts,
     mill,
     dia,
-    weight,
+    weight: weight ?? null,
     rate,
     amount
   };
@@ -98,10 +98,10 @@ function findTotalLineIndex(lines) {
 }
 
 /**
- * Find index of header line (S.No, D.C., Fabric, Wt, Rate, Amount). Rows start after this.
+ * Find index of header line (S.No, D.C., Fabric, GG, COUNTS, MILL, DIA, Wt, Rate, Amount). Rows start after this.
  */
 function findHeaderLineIndex(lines) {
-  const headerKeywords = /S\.?\s*No|D\.?\s*C\.?|Fabric|Wt\.?\s*Kgs|Rate|Amount/i;
+  const headerKeywords = /S\.?\s*No|D\.?\s*C\.?|Fabric|Wt\.?\s*Kgs|Rate|Amount|GG|COUNTS|MILL|DIA/i;
   for (let i = 0; i < lines.length; i++) {
     if (headerKeywords.test(lines[i])) return i;
   }
